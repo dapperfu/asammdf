@@ -1,7 +1,7 @@
 
 .PHONY: update
 update:
-	git fetch upstream
+	git fetch upstream --verbose
 
 .PHONY: upstream
 upstream:
