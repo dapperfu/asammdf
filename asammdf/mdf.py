@@ -4,6 +4,9 @@
 import csv
 import os
 import sys
+import xml.etree.ElementTree as ET
+from collections import OrderedDict
+from copy import deepcopy
 from warnings import warn
 from functools import reduce
 from struct import unpack
@@ -22,17 +25,23 @@ from .utils import (
     MdfException,
     get_text_v3,
     get_text_v4,
+    get_unique_name,
+    matlab_compatible,
+    validate_memory_argument,
+    validate_version_argument,
+    MDF2_VERSIONS,
+    MDF3_VERSIONS,
+    MDF4_VERSIONS,
+    SUPPORTED_VERSIONS,
 )
 from .v2_v3_blocks import Channel as ChannelV3
+from .v2_v3_blocks import HeaderBlock as HeaderV3
 from .v4_blocks import Channel as ChannelV4
-from .v4_blocks import ChannelArrayBlock
+from .v4_blocks import HeaderBlock as HeaderV4
+from .v4_blocks import ChannelArrayBlock, EventBlock
+from . import v4_constants as v4c
 
 PYVERSION = sys.version_info[0]
-
-MDF2_VERSIONS = ('2.00', '2.10', '2.14')
-MDF3_VERSIONS = ('3.00', '3.10', '3.20', '3.30')
-MDF4_VERSIONS = ('4.00', '4.10', '4.11')
-SUPPORTED_VERSIONS = MDF2_VERSIONS + MDF3_VERSIONS + MDF4_VERSIONS
 
 
 __all__ = ['MDF', 'SUPPORTED_VERSIONS']
@@ -65,8 +74,12 @@ class MDF(object):
     def __init__(self, name=None, memory='full', version='4.10'):
         if name:
             if os.path.isfile(name):
+                memory = validate_memory_argument(memory)
                 with open(name, 'rb') as file_stream:
-                    file_stream.read(8)
+                    magic_header = file_stream.read(3)
+                    if magic_header != b'MDF':
+                        raise MdfException('"{}" is not a valid ASAM MDF file'.format(name))
+                    file_stream.seek(8)
                     version = file_stream.read(4).decode('ascii').strip(' \0')
                     if not version:
                         file_stream.read(16)
@@ -86,6 +99,8 @@ class MDF(object):
             else:
                 raise MdfException('File "{}" does not exist'.format(name))
         else:
+            version = validate_version_argument(version)
+            memory = validate_memory_argument(memory)
             if version in MDF2_VERSIONS:
                 self._mdf = MDF3(
                     version=version,
@@ -116,13 +131,180 @@ class MDF(object):
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
+    def _transfer_events(self, other):
+
+        def get_scopes(event, events):
+            if event.scopes:
+                return event.scopes
+            else:
+                if event.parent is not None:
+                    return get_scopes(events[event.parent], events)
+                elif event.range_start is not None:
+                    return get_scopes(events[event.range_start], events)
+                else:
+                    return event.scopes
+
+        if other.version >= '4.00':
+            for event in other.events:
+                if self.version >= '4.00':
+                    new_event = deepcopy(event)
+                    event_valid = True
+                    for i, ref in enumerate(new_event.scopes):
+                        try:
+                            ch_cntr, dg_cntr = ref
+                            try:
+                                (self.groups
+                                    [dg_cntr]
+                                    ['channels']
+                                    [ch_cntr])
+                            except:
+                                event_valid = False
+                        except TypeError:
+                            dg_cntr = ref
+                            try:
+                                (
+                                    self.groups
+                                    [dg_cntr]
+                                    ['channel_group'])
+                            except:
+                                event_valid = False
+                    # ignore attachments for now
+                    for i in range(new_event['attachment_nr']):
+                        key = 'attachment_{}_addr'.format(i)
+                        event[key] = 0
+                    if event_valid:
+                        self.events.append(new_event)
+                else:
+                    ev_type = event['event_type']
+                    ev_range = event['range_type']
+                    ev_base = event['sync_base']
+                    ev_factor = event['sync_factor']
+
+                    timestamp = ev_base * ev_factor
+
+                    try:
+                        comment = ET.fromstring(event.comment.replace(' xmlns="http://www.asam.net/mdf/v4"', ''))
+                        pre = comment.find('.//pre_trigger_interval')
+                        if pre is not None:
+                            pre = float(pre.text)
+                        else:
+                            pre = 0.0
+                        post = comment.find('.//post_trigger_interval')
+                        if post is not None:
+                            post = float(post.text)
+                        else:
+                            post = 0.0
+                        comment = comment.find('.//TX')
+                        if comment is not None:
+                            comment = comment.text
+                        else:
+                            comment = ''
+
+                    except:
+                        pre = 0.0
+                        post = 0.0
+                        comment = event.comment
+
+                    if comment:
+                        comment += ': '
+
+                    if ev_range == v4c.EVENT_RANGE_TYPE_BEGINNING:
+                        comment += 'Begin of '
+                    elif ev_range == v4c.EVENT_RANGE_TYPE_END:
+                        comment += 'End of '
+                    else:
+                        comment += 'Single point '
+
+                    if ev_type == v4c.EVENT_TYPE_RECORDING:
+                        comment += 'recording'
+                    elif ev_type == v4c.EVENT_TYPE_RECORDING_INTERRUPT:
+                        comment += 'recording interrupt'
+                    elif ev_type == v4c.EVENT_TYPE_ACQUISITION_INTERRUPT:
+                        comment += 'acquisition interrupt'
+                    elif ev_type == v4c.EVENT_TYPE_START_RECORDING_TRIGGER:
+                        comment += 'measurement start trigger'
+                    elif ev_type == v4c.EVENT_TYPE_STOP_RECORDING_TRIGGER:
+                        comment += 'measurement stop trigger'
+                    elif ev_type == v4c.EVENT_TYPE_TRIGGER:
+                        comment += 'trigger'
+                    else:
+                        comment += 'marker'
+
+                    scopes = get_scopes(event, other.events)
+                    if scopes:
+                        for i, ref in enumerate(scopes):
+                            event_valid = True
+                            try:
+                                ch_cntr, dg_cntr = ref
+                                try:
+                                    (self.groups
+                                        [dg_cntr]
+                                        )
+                                except:
+                                    event_valid = False
+                            except TypeError:
+                                dg_cntr = ref
+                                try:
+                                    (
+                                        self.groups
+                                        [dg_cntr])
+                                except:
+                                    event_valid = False
+                            if event_valid:
+
+                                self.add_trigger(
+                                    dg_cntr,
+                                    timestamp,
+                                    pre_time=pre,
+                                    post_time=post,
+                                    comment=comment,
+                                )
+                    else:
+                        for i, _ in enumerate(self.groups):
+                            self.add_trigger(
+                                i,
+                                timestamp,
+                                pre_time=pre,
+                                post_time=post,
+                                comment=comment,
+                            )
+
+        else:
+            for trigger_info in other.iter_get_triggers():
+                comment = trigger_info['comment']
+                timestamp = trigger_info['time']
+                group = trigger_info['group']
+
+                if self.version < '4.00':
+                    self.add_trigger(
+                        group,
+                        timestamp,
+                        pre_time=trigger_info['pre_time'],
+                        post_time=trigger_info['post_time'],
+                        comment=comment,
+                    )
+                else:
+                    if timestamp:
+                        ev_type = v4c.EVENT_TYPE_TRIGGER
+                    else:
+                        ev_type = v4c.EVENT_TYPE_START_RECORDING_TRIGGER
+                    event = EventBlock(
+                        event_type=ev_type,
+                        sync_base=int(timestamp * 10**9),
+                        sync_factor=10**-9,
+                        scope_0_addr=0,
+                    )
+                    event.comment = comment
+                    event.scopes.append(group)
+                    self.events.append(event)
+
     def _excluded_channels(self, index):
         """ get the indexes list of channels that are excluded when processing
         teh channel group. The candiates for exlusion are the master channel
         (since it is retrieved as `Signal` timestamps), structure channel
         composition component channels (since they are retrieved as fields in
-        the `Signal` samples recarray) and channel dependecies (mdf version 3) /
-        channel array axes
+        the `Signal` samples recarray) and channel dependecies (mdf version 3)
+        / channel array axes
 
         Parameters
         ----------
@@ -143,6 +325,7 @@ class MDF(object):
         excluded_channels.add(master_index)
 
         channels = group['channels']
+        channel_group = group['channel_group']
 
         if self.version in MDF2_VERSIONS + MDF3_VERSIONS:
             for dep in group['channel_dependencies']:
@@ -152,6 +335,39 @@ class MDF(object):
                     if gp_nr == index:
                         excluded_channels.add(ch_nr)
         else:
+            if channel_group['flags'] & v4c.FLAG_CG_BUS_EVENT:
+                where = self.whereis('CAN_DataFrame')
+                for dg_cntr, ch_cntr in where:
+                    if dg_cntr == index:
+                        break
+                else:
+                    raise MdfException('CAN_DataFrame not found in group ' + str(index))
+                channel = channels[ch_cntr]
+                excluded_channels.add(ch_cntr)
+                if group['data_location'] == v4c.LOCATION_ORIGINAL_FILE:
+                    stream = self._file
+                else:
+                    stream = self._tempfile
+                if self.memory == 'minimum':
+                    channel = ChannelV4(
+                        address=channel,
+                        stream=stream,
+                        load_metadata=False,
+                    )
+                frame_bytes = range(
+                    channel['byte_offset'],
+                    channel['byte_offset'] + channel['bit_count'] // 8,
+                )
+                for i, channel in enumerate(channels):
+                    if self.memory == 'minimum':
+                        channel = ChannelV4(
+                            address=channel,
+                            stream=stream,
+                            load_metadata=False,
+                        )
+                    if channel['byte_offset'] in frame_bytes:
+                        excluded_channels.add(i)
+
             for dependencies in group['channel_dependencies']:
                 if dependencies is None:
                     continue
@@ -166,6 +382,103 @@ class MDF(object):
                                 excluded_channels.add(ch_nr)
 
         return excluded_channels
+
+    def _included_channels(self, index):
+        """ get the indexes list of channels that are excluded when processing
+        teh channel group. The candidates for exclusion are the master channel
+        (since it is retrieved as `Signal` timestamps), structure channel
+        composition component channels (since they are retrieved as fields in
+        the `Signal` samples recarray) and channel dependencies (mdf version 3)
+        / channel array axes
+
+        Parameters
+        ----------
+        index : int
+            channel group index
+
+        Returns
+        -------
+        included_channels : set
+            set of excluded channels
+
+        """
+
+        group = self.groups[index]
+
+        included_channels = set(range(len(group['channels'])))
+        master_index = self.masters_db.get(index, None)
+        if master_index is not None:
+            included_channels.remove(master_index)
+
+        channels = group['channels']
+        channel_group = group['channel_group']
+
+        if self.version in MDF2_VERSIONS + MDF3_VERSIONS:
+            for dep in group['channel_dependencies']:
+                if dep is None:
+                    continue
+                for ch_nr, gp_nr in dep.referenced_channels:
+                    if gp_nr == index:
+                        included_channels.add(ch_nr)
+        else:
+            if channel_group['flags'] & v4c.FLAG_CG_BUS_EVENT:
+                where = self.whereis('CAN_DataFrame')
+                for dg_cntr, ch_cntr in where:
+                    if dg_cntr == index:
+                        break
+                else:
+                    raise MdfException('CAN_DataFrame not found in group ' + str(index))
+                channel = channels[ch_cntr]
+                if group['data_location'] == v4c.LOCATION_ORIGINAL_FILE:
+                    stream = self._file
+                else:
+                    stream = self._tempfile
+                if self.memory == 'minimum':
+                    channel = ChannelV4(
+                        address=channel,
+                        stream=stream,
+                        load_metadata=False,
+                    )
+                frame_bytes = range(
+                    channel['byte_offset'],
+                    channel['byte_offset'] + channel['bit_count'] // 8,
+                )
+                for i, channel in enumerate(channels):
+                    if self.memory == 'minimum':
+                        channel = ChannelV4(
+                            address=channel,
+                            stream=stream,
+                            load_metadata=False,
+                        )
+                    if channel['byte_offset'] in frame_bytes:
+                        included_channels.remove(i)
+                dbc_addr = group['dbc_addr']
+                message_id = group['message_id']
+                can_msg = self._dbc_cache[dbc_addr].frameById(message_id)
+
+                for i, _ in enumerate(can_msg.signals, 1):
+                    included_channels.add(-5*i)
+
+            for dependencies in group['channel_dependencies']:
+                if dependencies is None:
+                    continue
+                if all(not isinstance(dep, ChannelArrayBlock)
+                       for dep in dependencies):
+                    for ch_nr, _ in dependencies:
+                        try:
+                            included_channels.remove(ch_nr)
+                        except KeyError:
+                            pass
+                else:
+                    for dep in dependencies:
+                        for ch_nr, gp_nr in dep.referenced_channels:
+                            if gp_nr == index:
+                                try:
+                                    included_channels.remove(ch_nr)
+                                except KeyError:
+                                    pass
+
+        return included_channels
 
     def __contains__(self, channel):
         """ if *'channel name'* in *'mdf file'* """
@@ -197,83 +510,94 @@ class MDF(object):
             new *MDF* object
 
         """
-        if to not in SUPPORTED_VERSIONS:
-            message = (
-                'Unknown output mdf version "{}".'
-                ' Available versions are {}.'
-                ' Automatically using version 4.10'
-            )
-            warn(message.format(to, SUPPORTED_VERSIONS))
-            version = '4.10'
-        else:
-            version = to
-
-        if memory not in ('full', 'low', 'minimum'):
-            memory = self.memory
+        version = validate_version_argument(to)
+        memory = validate_memory_argument(memory)
 
         out = MDF(version=version, memory=memory)
 
+        out.header.start_time = self.header.start_time
+
         # walk through all groups and get all channels
         for i, group in enumerate(self.groups):
-            excluded_channels = self._excluded_channels(i)
-            channels_nr = len(group['channels'])
+            included_channels = self._included_channels(i)
+
+            parents, dtypes = self._prepare_record(group)
+            group['parents'], group['types'] = parents, dtypes
 
             data = self._load_group_data(group)
             for idx, fragment in enumerate(data):
+
+                if dtypes.itemsize:
+                    group['record'] = np.core.records.fromstring(
+                        fragment[0],
+                        dtype=dtypes,
+                    )
+                else:
+                    group['record'] = None
 
                 # the first fragment triggers and append that will add the
                 # metadata for all channels
                 if idx == 0:
                     sigs = []
-                    for j in range(channels_nr):
-                        if j in excluded_channels:
-                            continue
-                        else:
-                            sig = self.get(
+                    for j in included_channels:
+                        sig = self.get(
+                            group=i,
+                            index=j,
+                            data=fragment,
+                            raw=True,
+                        )
+                        if version < '4.00' and sig.samples.dtype.kind == 'S':
+                            strsig = self.get(
                                 group=i,
                                 index=j,
-                                data=fragment,
-                                raw=True,
+                                samples_only=True,
                             )
-                            if version < '4.00' and sig.samples.dtype.kind == 'S':
-                                strsig = self.get(
-                                    group=i,
-                                    index=j,
-                                    samples_only=True,
-                                )
-                                sig.samples = sig.samples.astype(strsig.dtype)
-                                del strsig
-                            if not sig.samples.flags.writeable:
-                                sig.samples = sig.samples.copy()
-                            sigs.append(sig)
+                            sig.samples = sig.samples.astype(strsig.dtype)
+                            del strsig
+                        if not sig.samples.flags.writeable:
+                            sig.samples = sig.samples.copy()
+                        sigs.append(sig)
                     source_info = 'Converted from {} to {}'
-                    out.append(
-                        sigs,
-                        source_info.format(self.version, to),
-                        common_timebase=True,
-                    )
+
+                    if sigs:
+                        out.append(
+                            sigs,
+                            source_info.format(self.version, to),
+                            common_timebase=True,
+                        )
+                        new_group = out.groups[-1]
+                        new_channel_group = new_group['channel_group']
+                        old_channel_group = group['channel_group']
+                        new_channel_group.comment = old_channel_group.comment
+                        if version >= '4.00':
+                            new_channel_group['path_separator'] = ord('.')
+                            if self.version >= '4.00':
+                                new_channel_group.acq_name = old_channel_group.acq_name
+                                new_channel_group.acq_source = old_channel_group.acq_source
+                    else:
+                        break
 
                 # the other fragments will trigger onl the extension of
                 # samples records to the data block
                 else:
                     sigs = [self.get_master(i, data=fragment), ]
 
-                    for j in range(channels_nr):
-                        if j in excluded_channels:
-                            continue
-                        else:
-                            sig = self.get(
-                                group=i,
-                                index=j,
-                                data=fragment,
-                                raw=True,
-                                samples_only=True,
-                            )
-                            if not sig.flags.writeable:
-                                sig = sig.copy()
-                            sigs.append(sig)
+                    for j in included_channels:
+                        sig = self.get(
+                            group=i,
+                            index=j,
+                            data=fragment,
+                            raw=True,
+                            samples_only=True,
+                        )
+                        if not sig.flags.writeable:
+                            sig = sig.copy()
+                        sigs.append(sig)
                     out.extend(i, sigs)
 
+                del group['record']
+
+        out._transfer_events(self)
         return out
 
     def cut(self, start=None, stop=None, whence=0):
@@ -287,7 +611,8 @@ class MDF(object):
             start time, default *None*. If *None* then the start of measurement
             is used
         stop : float
-            stop time, default *None*. If *None* then the end of measurement is used
+            stop time, default *None*. If *None* then the end of measurement is
+            used
         whence : int
             how to search for the start and stop values
 
@@ -304,6 +629,8 @@ class MDF(object):
             version=self.version,
             memory=self.memory,
         )
+
+        out.header.start_time = self.header.start_time
 
         if whence == 1:
             timestamps = []
@@ -323,17 +650,25 @@ class MDF(object):
             if stop is not None:
                 stop += first_timestamp
 
+        out.header.start_time = self.header.start_time
+
         # walk through all groups and get all channels
         for i, group in enumerate(self.groups):
-            sigs = []
-            excluded_channels = self._excluded_channels(i)
-
-            channels_nr = len(group['channels'])
+            included_channels = self._included_channels(i)
 
             data = self._load_group_data(group)
+            parents, dtypes = self._prepare_record(group)
+            group['parents'], group['types'] = parents, dtypes
 
             idx = 0
             for fragment in data:
+                if dtypes.itemsize:
+                    group['record'] = np.core.records.fromstring(
+                        fragment[0],
+                        dtype=dtypes,
+                    )
+                else:
+                    group['record'] = None
                 master = self.get_master(i, fragment)
                 if not len(master):
                     continue
@@ -345,103 +680,117 @@ class MDF(object):
                     fragment_stop = None
                     start_index = 0
                     stop_index = len(master)
+                elif start is None:
+                    fragment_start = None
+                    start_index = 0
+                    if master[0] > stop:
+                        break
+                    else:
+                        fragment_stop = min(stop, master[-1])
+                        stop_index = np.searchsorted(
+                            master,
+                            fragment_stop,
+                            side='right',
+                        )
+                elif stop is None:
+                    fragment_stop = None
+                    if master[-1] < start:
+                        continue
+                    else:
+                        fragment_start = max(start, master[0])
+                        start_index = np.searchsorted(
+                            master,
+                            fragment_start,
+                            side='left',
+                        )
+                        stop_index = len(master)
                 else:
-                    if start is None:
-                        fragment_start = None
-                        start_index = 0
-                        if master[0] > stop:
-                            break
-                        else:
-                            fragment_stop = min(stop, master[-1])
-                            stop_index = np.searchsorted(master, fragment_stop).flatten()[0] + 1
-                    elif stop is None:
-                        fragment_stop = None
-                        if master[-1] < start:
-                            continue
-                        else:
-                            fragment_start = max(start, master[0])
-                            start_index = np.searchsorted(master, fragment_start).flatten()[0]
-                            stop_index = len(master)
+                    if master[0] > stop:
+                        break
+                    elif master[-1] < start:
+                        continue
                     else:
-                        if master[0] > stop:
-                            break
-                        elif master[-1] < start:
-                            continue
+                        fragment_start = max(start, master[0])
+                        start_index = np.searchsorted(
+                            master,
+                            fragment_start,
+                            side='left',
+                        )
+                        fragment_stop = min(stop, master[-1])
+                        stop_index = np.searchsorted(
+                            master,
+                            fragment_stop,
+                            side='right',
+                        )
+
+                # the first fragment triggers and append that will add the
+                # metadata for all channels
+                if idx == 0:
+                    sigs = []
+                    for j in included_channels:
+                        sig = self.get(
+                            group=i,
+                            index=j,
+                            data=fragment,
+                            raw=True,
+                        ).cut(fragment_start, fragment_stop)
+                        if not sig.samples.flags.writeable:
+                            sig.samples = sig.samples.copy()
+                        sigs.append(sig)
+
+                    if sigs:
+                        if start:
+                            start_ = '{}s'.format(start)
                         else:
-                            fragment_start = max(start, master[0])
-                            start_index = np.searchsorted(master, fragment_start).flatten()[0]
-                            fragment_stop = min(stop, master[-1])
-                            stop_index = np.searchsorted(master, fragment_stop).flatten()[0] + 1
+                            start_ = 'start of measurement'
+                        if stop:
+                            stop_ = '{}s'.format(stop)
+                        else:
+                            stop_ = 'end of measurement'
+                        out.append(
+                            sigs,
+                            'Cut from {} to {}'.format(start_, stop_),
+                            common_timebase=True,
+                        )
 
-                    # the first fragment triggers and append that will add the
-                    # metadata for all channels
-                    if idx == 0:
-                        sigs = []
-                        for j in range(channels_nr):
-                            if j in excluded_channels:
-                                continue
-                            sig = self.get(
-                                group=i,
-                                index=j,
-                                data=fragment,
-                                raw=True,
-                            ).cut(fragment_start, fragment_stop)
-                            if not sig.samples.flags.writeable:
-                                sig.samples = sig.samples.copy()
-                            sigs.append(sig)
+                    idx += 1
 
-                        if sigs:
-                            if start:
-                                start_ = '{}s'.format(start)
-                            else:
-                                start_ = 'start of measurement'
-                            if stop:
-                                stop_ = '{}s'.format(stop)
-                            else:
-                                stop_ = 'end of measurement'
-                            out.append(
-                                sigs,
-                                'Cut from {} to {}'.format(start_, stop_),
-                                common_timebase=True,
-                            )
+                # the other fragments will trigger onl the extension of
+                # samples records to the data block
+                else:
+                    sigs = [master[start_index: stop_index].copy(), ]
 
-                        idx += 1
+                    for j in included_channels:
+                        sig = self.get(
+                            group=i,
+                            index=j,
+                            data=fragment,
+                            raw=True,
+                            samples_only=True
+                        )[start_index: stop_index]
+                        if not sig.flags.writeable:
+                            sig = sig.copy()
+                        sigs.append(sig)
 
-                    # the other fragments will trigger onl the extension of
-                    # samples records to the data block
-                    else:
-                        sigs = [master[start_index: stop_index].copy(), ]
+                    if sigs:
+                        out.extend(i, sigs)
 
-                        for j in range(channels_nr):
-                            if j in excluded_channels:
-                                continue
-                            sig = self.get(
-                                group=i,
-                                index=j,
-                                data=fragment,
-                                raw=True,
-                                samples_only=True
-                            )[start_index: stop_index]
-                            if not sig.flags.writeable:
-                                sig = sig.copy()
-                            sigs.append(sig)
+                    idx += 1
 
-                        if sigs:
-                            out.extend(i, sigs)
-
-                        idx += 1
+                del group['record']
 
             # if the cut interval is not found in the measurement
             # then append an empty data group
             if idx == 0:
+
                 self.configure(read_fragment_size=1)
                 sigs = []
 
                 fragment = next(self._load_group_data(group))
 
-                for j in range(channels_nr):
-                    if j in excluded_channels:
-                        continue
+                fragment = (fragment[0], -1)
+
+                for j in included_channels:
                     sig = self.get(
                         group=i,
                         index=j,
@@ -468,11 +817,12 @@ class MDF(object):
 
                 self.configure(read_fragment_size=0)
 
+        out._transfer_events(self)
         return out
 
-    def export(self, fmt, filename=None):
+    def export(self, fmt, filename=None, **kargs):
         """ export *MDF* to other formats. The *MDF* file name is used is
-        available, else the *filename* aragument must be provided.
+        available, else the *filename* argument must be provided.
 
         Parameters
         ----------
@@ -497,8 +847,28 @@ class MDF(object):
               will be renamed to 'DataGroup_<cntr>_<channel name>_master'
               ( *<cntr>* is the data group index starting from 0)
 
+            * `pandas` : export all channels as a single pandas DataFrame
+
         filename : string
             export file name
+
+        **kwargs
+
+            * `single_time_base`: resample all channels to common time base,
+              default *False* (pandas export is by default single based)
+            * `raster`: float time raster for resampling. Valid if
+              *single_time_base* is *True* and for *pandas*
+              export
+            * `time_from_zero`: adjust time channel to start from 0
+            * `use_display_names`: use display name instead of standard channel
+              name, if available.
+            * `empty_channels`: behaviour for channels without samples; the
+              options are *skip* or *zeros*; default is *zeros*
+
+        Returns
+        -------
+        dataframe : pandas.DataFrame
+            only in case of *pandas* export
 
         """
 
@@ -517,33 +887,220 @@ class MDF(object):
             warn(message)
             return
 
+        single_time_base = kargs.get('single_time_base', False)
+        raster = kargs.get('raster', 0)
+        time_from_zero = kargs.get('time_from_zero', True)
+        use_display_names = kargs.get('use_display_names', True)
+        empty_channels = kargs.get('empty_channels', 'zeros')
+
         name = filename if filename else self.name
+
+        if single_time_base or fmt == 'pandas':
+            mdict = OrderedDict()
+            units = OrderedDict()
+            comments = OrderedDict()
+            masters = [
+                self.get_master(i)
+                for i in range(len(self.groups))
+            ]
+            master = reduce(np.union1d, masters)
+            if raster and len(master):
+                master_ = np.arange(
+                    master[0],
+                    master[-1],
+                    raster,
+                    dtype=np.float64,
+                )
+
+                if len(master_):
+                    master = master_
+
+            if time_from_zero and len(master):
+                mdict['t'] = master - master[0]
+            else:
+                mdict['t'] = master
+
+            units['t'] = 's'
+            comments['t'] = ''
+
+            used_names = {'t'}
+            count = len(self.groups)
+
+            for i, grp in enumerate(self.groups):
+                master_index = self.masters_db.get(i, -1)
+                data = self._load_group_data(grp)
+
+                if PYVERSION == 2:
+                    data = b''.join(str(d[0]) for d in data)
+                else:
+                    data = b''.join(d[0] for d in data)
+                data = (data, 0)
+
+                for j, _ in enumerate(grp['channels']):
+                    if j == master_index:
+                        continue
+                    sig = self.get(
+                        group=i,
+                        index=j,
+                        data=data,
+                    ).interp(master)
+
+                    if len(sig.samples.shape) > 1:
+                        arr = [sig.samples, ]
+                        types = [(sig.name, sig.samples.dtype, sig.samples.shape[1:]), ]
+                        sig.samples = np.core.records.fromarrays(
+                            arr,
+                            dtype=types,
+                        )
+
+                    if use_display_names:
+                        channel_name = sig.display_name or sig.name
+                    else:
+                        channel_name = sig.name
+
+                    if channel_name in used_names:
+                        channel_name = '{}_{}'.format(channel_name, i)
+
+                        channel_name = get_unique_name(
+                            used_names,
+                            channel_name,
+                        )
+                        used_names.add(channel_name)
+                    else:
+                        used_names.add(channel_name)
+
+                    if len(sig):
+                        mdict[channel_name] = sig.samples
+                        units[channel_name] = sig.unit
+                        comments[channel_name] = sig.comment
+                    else:
+                        if empty_channels == 'zeros':
+                            mdict[channel_name] = np.zeros(len(master), dtype=sig.samples.dtype)
+                            units[channel_name] = sig.unit
+                            comments[channel_name] = sig.comment
+
         if fmt == 'hdf5':
+
             try:
                 from h5py import File as HDF5
             except ImportError:
                 warn('h5py not found; export to HDF5 is unavailable')
                 return
             else:
+
                 if not name.endswith('.hdf'):
-                    name = os.path.splitext(name)[0] + '.hdf'
-                with HDF5(name, 'w') as hdf:
-                    # header information
-                    group = hdf.create_group(os.path.basename(name))
+                    name += '.hdf'
 
-                    if self.version in MDF2_VERSIONS + MDF3_VERSIONS:
-                        for item in header_items:
-                            group.attrs[item] = self.header[item]
+                if single_time_base:
+                    with HDF5(name, 'w') as hdf:
+                        # header information
+                        group = hdf.create_group(os.path.basename(name))
 
-                    # save each data group in a HDF5 group called
-                    # "DataGroup_<cntr>" with the index starting from 1
-                    # each HDF5 group will have a string attribute "master"
-                    # that will hold the name of the master channel
+                        if self.version in MDF2_VERSIONS + MDF3_VERSIONS:
+                            for item in header_items:
+                                group.attrs[item] = self.header[item]
+
+                        # save each data group in a HDF5 group called
+                        # "DataGroup_<cntr>" with the index starting from 1
+                        # each HDF5 group will have a string attribute "master"
+                        # that will hold the name of the master channel
+
+                        for channel in mdict:
+                            samples = mdict[channel]
+                            unit = units[channel]
+                            comment = comments[channel]
+
+                            dataset = group.create_dataset(
+                                channel,
+                                data=samples,
+                            )
+                            unit = unit.replace('\0', '')
+                            if unit:
+                                dataset.attrs['unit'] = unit
+                            comment = comment.replace('\0', '')
+                            if comment:
+                                dataset.attrs['comment'] = comment
+
+                else:
+                    with HDF5(name, 'w') as hdf:
+                        # header information
+                        group = hdf.create_group(os.path.basename(name))
+
+                        if self.version in MDF2_VERSIONS + MDF3_VERSIONS:
+                            for item in header_items:
+                                group.attrs[item] = self.header[item]
+
+                        # save each data group in a HDF5 group called
+                        # "DataGroup_<cntr>" with the index starting from 1
+                        # each HDF5 group will have a string attribute "master"
+                        # that will hold the name of the master channel
+                        for i, grp in enumerate(self.groups):
+                            group_name = r'/' + 'DataGroup_{}'.format(i + 1)
+                            group = hdf.create_group(group_name)
+
+                            master_index = self.masters_db.get(i, -1)
+
+                            data = self._load_group_data(grp)
+
+                            if PYVERSION == 2:
+                                data = b''.join(str(d[0]) for d in data)
+                            else:
+                                data = b''.join(d[0] for d in data)
+                            data = (data, 0)
+
+                            for j, _ in enumerate(grp['channels']):
+                                sig = self.get(group=i, index=j, data=data)
+                                name = sig.name
+                                if j == master_index:
+                                    group.attrs['master'] = name
+                                dataset = group.create_dataset(name,
+                                                               data=sig.samples)
+                                unit = sig.unit.replace('\0', '')
+                                if unit:
+                                    dataset.attrs['unit'] = unit
+                                comment = sig.comment.replace('\0', '')
+                                if comment:
+                                    dataset.attrs['comment'] = comment
+
+        elif fmt == 'excel':
+            try:
+                import xlsxwriter
+            except ImportError:
+                warn('xlsxwriter not found; export to Excel unavailable')
+                return
+            else:
+
+                if single_time_base:
+                    if not name.endswith('.xlsx'):
+                        name += '.xlsx'
+                    print('Writing excel export to file "{}"'.format(name))
+
+                    workbook = xlsxwriter.Workbook(name)
+                    sheet = workbook.add_worksheet('Channels')
+
+                    for col, (channel_name, channel_unit) in enumerate(units.items()):
+                        samples = mdict[channel_name]
+                        sig_description = '{} [{}]'.format(
+                            channel_name,
+                            channel_unit,
+                        )
+                        sheet.write(0, col, sig_description)
+                        try:
+                            sheet.write_column(1, col, samples.astype(str))
+                        except:
+                            vals = [str(e) for e in sig.samples]
+                            sheet.write_column(1, col, vals)
+
+                    workbook.close()
+
+                else:
+                    while name.endswith('.xlsx'):
+                        name = name[:-5]
+
+                    count = len(self.groups)
+
                     for i, grp in enumerate(self.groups):
-                        group_name = r'/' + 'DataGroup_{}'.format(i + 1)
-                        group = hdf.create_group(group_name)
-
-                        master_index = self.masters_db.get(i, -1)
+                        print('Exporting group {} of {}'.format(i + 1, count))
 
                         data = self._load_group_data(grp)
 
@@ -553,116 +1110,179 @@ class MDF(object):
                             data = b''.join(d[0] for d in data)
                         data = (data, 0)
 
-                        for j, _ in enumerate(grp['channels']):
-                            sig = self.get(group=i, index=j, data=data)
-                            name = sig.name
-                            if j == master_index:
-                                group.attrs['master'] = name
-                            dataset = group.create_dataset(name,
-                                                           data=sig.samples)
-                            if sig.unit:
-                                dataset.attrs['unit'] = sig.unit
-                            if sig.comment:
-                                dataset.attrs['comment'] = sig.comment
+                        master_index = self.masters_db.get(i, None)
+                        if master_index is not None:
+                            master = self.get(group=i, index=master_index, data=data)
 
-        elif fmt == 'excel':
-            try:
-                import xlsxwriter
-            except ImportError:
-                warn('xlsxwriter not found; export to Excel unavailable')
-                return
-            else:
-                excel_name = os.path.splitext(name)[0]
-                count = len(self.groups)
-                for i, grp in enumerate(self.groups):
-                    print('Exporting group {} of {}'.format(i + 1, count))
+                            if raster and len(master):
+                                raster_ = np.arange(
+                                    master[0],
+                                    master[-1],
+                                    raster,
+                                    dtype=np.float64,
+                                )
+                                master = master.interp(raster_)
+                            else:
+                                raster_ = None
+                        else:
+                            master = None
+                            raster_ = None
 
-                    data = self._load_group_data(grp)
+                        if time_from_zero:
+                            master.samples -= master.samples[0]
 
-                    group_name = 'DataGroup_{}'.format(i + 1)
-                    wb_name = '{}_{}.xlsx'.format(excel_name, group_name)
-                    workbook = xlsxwriter.Workbook(wb_name)
-                    bold = workbook.add_format({'bold': True})
+                        group_name = 'DataGroup_{}'.format(i + 1)
+                        wb_name = '{}_{}.xlsx'.format(name, group_name)
+                        workbook = xlsxwriter.Workbook(wb_name)
+                        bold = workbook.add_format({'bold': True})
 
-                    if self.version in MDF2_VERSIONS + MDF3_VERSIONS:
                         sheet = workbook.add_worksheet(group_name)
-                        for j, item in enumerate(header_items):
-                            sheet.write(j, 0, item.title(), bold)
-                            sheet.write(j, 1, self.header[item].decode('latin-1'))
 
-                        # the sheet header has 3 rows
-                        # the channel name and unit 'YY [xx]'
-                        # the channel comment
-                        # the flag for data grup master channel
-                        sheet.write(0, 0, 'Channel', bold)
-                        sheet.write(1, 0, 'comment', bold)
-                        sheet.write(2, 0, 'is master', bold)
+                        if master is not None:
 
-                        master_index = self.masters_db.get(i, -1)
+                            sig_description = '{} [{}]'.format(
+                                master.name,
+                                master.unit,
+                            )
+                            sheet.write(0, 0, sig_description)
+                            sheet.write_column(1, 0, master.samples.astype(str))
 
-                        for j in range(grp['channel_group']['cycles_nr']):
-                            sheet.write(j + 3, 0, str(j))
+                            offset = 1
+                        else:
+                            offset = 0
 
-                        for j, _ in enumerate(grp['channels']):
-                            sig = self.get(group=i, index=j, data=data)
+                        for col, _ in enumerate(grp['channels']):
+                            if col == master_index:
+                                offset -= 1
+                                continue
 
-                            col = j + 1
+                            sig = self.get(group=i, index=col, data=data)
+                            if raster_ is not None:
+                                sig = sig.interp(raster_)
+
                             sig_description = '{} [{}]'.format(
                                 sig.name,
                                 sig.unit,
                             )
-                            comment = sig.comment if sig.comment else ''
-                            sheet.write(0, col, sig_description)
-                            sheet.write(1, col, comment)
-                            if j == master_index:
-                                sheet.write(2, col, 'x')
-                            sheet.write_column(3, col, sig.samples.astype(str))
+                            sheet.write(0, col + offset, sig_description)
 
-                    workbook.close()
+                            try:
+                                sheet.write_column(1, col + offset, sig.samples.astype(str))
+                            except:
+                                vals = [str(e) for e in sig.samples]
+                                sheet.write_column(1, col + offset, vals)
+
+                        workbook.close()
 
         elif fmt == 'csv':
-            csv_name = os.path.splitext(name)[0]
-            count = len(self.groups)
-            for i, grp in enumerate(self.groups):
-                print('Exporting group {} of {}'.format(i + 1, count))
-                data = self._load_group_data(grp)
 
-                group_name = 'DataGroup_{}'.format(i + 1)
-                group_csv_name = '{}_{}.csv'.format(csv_name, group_name)
-                with open(group_csv_name, 'w', newline='') as csvfile:
-                    writer = csv.writer(csvfile, delimiter=';')
+            if single_time_base:
+                if not name.endswith('.csv'):
+                    name += '.csv'
+                print('Writing csv export to file "{}"'.format(name))
+                with open(name, 'w', newline='') as csvfile:
+                    writer = csv.writer(csvfile)
 
-                    ch_nr = len(grp['channels'])
-                    channels = [
-                        self.get(group=i, index=j, data=data)
-                        for j in range(ch_nr)
-                    ]
-
-                    master_index = self.masters_db.get(i, -1)
-                    cycles = grp['channel_group']['cycles_nr']
-
-                    names_row = ['Channel', ]
-                    names_row += [
-                        '{} [{}]'.format(ch.name, ch.unit)
-                        for ch in channels
+                    names_row = [
+                        '{} [{}]'.format(channel_name, channel_unit)
+                        for (channel_name, channel_unit) in units.items()
                     ]
                     writer.writerow(names_row)
 
-                    comment_row = ['comment', ]
-                    comment_row += [ch.comment for ch in channels]
-                    writer.writerow(comment_row)
-
-                    master_row = ['Is master', ]
-                    master_row += [
-                        'x' if j == master_index else ''
-                        for j in range(ch_nr)
+                    vals = [
+                        samples
+                        for samples in mdict.values()
                     ]
-                    writer.writerow(master_row)
-
-                    vals = [np.array(range(cycles), dtype=np.uint32), ]
-                    vals += [ch.samples for ch in channels]
 
                     writer.writerows(zip(*vals))
+
+            else:
+
+                while name.endswith('.csv'):
+                    name = name[:-4]
+
+                count = len(self.groups)
+                for i, grp in enumerate(self.groups):
+                    print('Exporting group {} of {}'.format(i + 1, count))
+                    data = self._load_group_data(grp)
+
+                    if PYVERSION == 2:
+                        data = b''.join(str(d[0]) for d in data)
+                    else:
+                        data = b''.join(d[0] for d in data)
+                    data = (data, 0)
+
+                    group_name = 'DataGroup_{}'.format(i + 1)
+                    group_csv_name = '{}_{}.csv'.format(name, group_name)
+                    with open(group_csv_name, 'w', newline='') as csvfile:
+                        writer = csv.writer(csvfile)
+
+                        master_index = self.masters_db.get(i, None)
+                        if master_index is not None:
+                            master = self.get(group=i, index=master_index, data=data)
+
+                            if raster and len(master):
+                                raster_ = np.arange(
+                                    master[0],
+                                    master[-1],
+                                    raster,
+                                    dtype=np.float64,
+                                )
+                                master = master.interp(raster_)
+                            else:
+                                raster_ = None
+                        else:
+                            master = None
+                            raster_ = None
+
+                        if time_from_zero:
+                            master.samples -= master.samples[0]
+
+                        ch_nr = len(grp['channels'])
+                        if master is None:
+                            channels = [
+                                self.get(group=i, index=j, data=data)
+                                for j in range(ch_nr)
+                            ]
+                        else:
+                            if raster_ is not None:
+                                channels = [
+                                    self.get(group=i, index=j, data=data).interp(raster_)
+                                    for j in range(ch_nr)
+                                    if j != master_index
+                                ]
+                            else:
+                                channels = [
+                                    self.get(group=i, index=j, data=data)
+                                    for j in range(ch_nr)
+                                    if j != master_index
+                                ]
+
+                        if raster_ is not None:
+                            cycles = len(raster_)
+                        else:
+                            cycles = grp['channel_group']['cycles_nr']
+
+                        if empty_channels == 'zeros':
+                            for channel in channels:
+                                if not len(channel):
+                                    channel.samples = np.zeros(cycles, dtype=channel.samples.dtype)
+
+                        if master is not None:
+                            names_row = [master.name, ]
+                            vals = [master.samples]
+                        else:
+                            names_row = []
+                            vals = []
+                        names_row += [
+                            '{} [{}]'.format(ch.name, ch.unit)
+                            for ch in channels
+                        ]
+                        writer.writerow(names_row)
+
+                        vals += [ch.samples for ch in channels]
+
+                        writer.writerows(zip(*vals))
 
         elif fmt == 'mat':
             try:
@@ -671,26 +1291,55 @@ class MDF(object):
                 warn('scipy not found; export to mat is unavailable')
                 return
 
-            name = os.path.splitext(name)[0] + '.mat'
-            mdict = {}
+            if not name.endswith('.mat'):
+                name = name + '.mat'
 
-            master = 'DataGroup_{}_{}_master'
-            channel = 'DataGroup_{}_{}'
+            if not single_time_base:
+                mdict = {}
 
-            for i, grp in enumerate(self.groups):
-                master_index = self.masters_db.get(i, -1)
-                data = self._load_group_data(grp)
-                for j, _ in enumerate(grp['channels']):
-                    sig = self.get(
-                        group=i,
-                        index=j,
-                        data=data,
-                    )
-                    if j == master_index:
-                        channel_name = master.format(i, sig.name)
+                master_name_template = 'DataGroup_{}_{}_master'
+                channel_name_template = 'DataGroup_{}_{}'
+                used_names = set()
+
+                for i, grp in enumerate(self.groups):
+                    master_index = self.masters_db.get(i, -1)
+                    data = self._load_group_data(grp)
+
+                    if PYVERSION == 2:
+                        data = b''.join(str(d[0]) for d in data)
                     else:
-                        channel_name = channel.format(i, sig.name)
-                    mdict[channel_name] = sig.samples
+                        data = b''.join(d[0] for d in data)
+                    data = (data, 0)
+
+                    for j, _ in enumerate(grp['channels']):
+                        sig = self.get(
+                            group=i,
+                            index=j,
+                            data=data,
+                        )
+                        if j == master_index:
+                            channel_name = master_name_template.format(
+                                i,
+                                sig.name,
+                            )
+                        else:
+                            if use_display_names:
+                                channel_name = sig.display_name or sig.name
+                            else:
+                                channel_name = sig.name
+                            channel_name = channel_name_template.format(
+                                i,
+                                channel_name,
+                            )
+
+                        channel_name = matlab_compatible(channel_name)
+                        channel_name = get_unique_name(
+                            used_names,
+                            channel_name,
+                        )
+                        used_names.add(channel_name)
+
+                        mdict[channel_name] = sig.samples
 
             savemat(
                 name,
@@ -698,10 +1347,14 @@ class MDF(object):
                 long_field_names=True,
                 do_compression=True,
             )
+
+        elif fmt == 'pandas':
+            return DataFrame.from_dict(mdict)
+
         else:
             message = (
                 'Unsopported export type "{}". '
-                'Please select "csv", "excel", "hdf5" or "mat"'
+                'Please select "csv", "excel", "hdf5", "mat" or "pandas"'
             )
             warn(message.format(fmt))
 
@@ -769,6 +1422,8 @@ class MDF(object):
 
         """
 
+        memory = validate_memory_argument(memory)
+
         # group channels by group index
         gps = {}
 
@@ -795,14 +1450,14 @@ class MDF(object):
         # see if there are exluded channels in the filter list
         for group_index, indexes in gps.items():
             grp = self.groups[group_index]
-            excluded_channels = set()
+            included_channels = set(indexes)
             for index in indexes:
                 if self.version in MDF2_VERSIONS + MDF3_VERSIONS:
                     dep = grp['channel_dependencies'][index]
                     if dep:
                         for ch_nr, gp_nr in dep.referenced_channels:
                             if gp_nr == group:
-                                excluded_channels.add(ch_nr)
+                                included_channels.remove(ch_nr)
                 else:
                     dependencies = grp['channel_dependencies'][index]
                     if dependencies is None:
@@ -811,14 +1466,14 @@ class MDF(object):
                            for dep in dependencies):
                         channels = grp['channels']
                         for channel in dependencies:
-                            excluded_channels.add(channels.index(channel))
+                            included_channels.add(channels.index(channel))
                     else:
                         for dep in dependencies:
                             for ch_nr, gp_nr in dep.referenced_channels:
                                 if gp_nr == group:
-                                    excluded_channels.add(ch_nr)
+                                    included_channels.remove(ch_nr)
 
-            gps[group_index] = gps[group_index] - excluded_channels
+            gps[group_index] = included_channels
 
         if memory not in ('full', 'low', 'minimum'):
             memory = self.memory
@@ -827,6 +1482,8 @@ class MDF(object):
             version=self.version,
             memory=memory,
         )
+
+        mdf.header.start_time = self.header.start_time
 
         if self.name:
             origin = os.path.basename(self.name)
@@ -838,8 +1495,18 @@ class MDF(object):
             group = self.groups[group_index]
 
             data = self._load_group_data(group)
+            parents, dtypes = self._prepare_record(group)
+            group['parents'], group['types'] = parents, dtypes
 
             for idx, fragment in enumerate(data):
+
+                if dtypes.itemsize:
+                    group['record'] = np.core.records.fromstring(
+                        fragment[0],
+                        dtype=dtypes,
+                    )
+                else:
+                    group['record'] = None
 
                 # the first fragment triggers and append that will add the
                 # metadata for all channels
@@ -889,11 +1556,14 @@ class MDF(object):
                         sigs.append(sig)
                     mdf.extend(new_index, sigs)
 
+                del group['record']
+
+        mdf._transfer_events(self)
         return mdf
 
     @staticmethod
-    def merge(files, outversion='4.10', memory='full'):
-        """ merge several files and return the merged *MDF* object. The files
+    def concatenate(files, outversion='4.10', memory='full'):
+        """ concatenates several files. The files
         must have the same internal structure (same number of groups, and same
         channels in each group)
 
@@ -908,13 +1578,13 @@ class MDF(object):
 
         Returns
         -------
-        merged : MDF
-            new *MDF* object with merged channels
+        concatenate : MDF
+            new *MDF* object with concatenated channels
 
         Raises
         ------
         MdfException : if there are inconsistencies between the files
-            merged MDF object
+
         """
         if not files:
             raise MdfException('No files given for merge')
@@ -924,6 +1594,17 @@ class MDF(object):
             for file in files
         ]
 
+        timestamps = [
+            file.header.start_time
+            for file in files
+        ]
+
+        oldest = min(timestamps)
+        offsets = [
+            (timestamp - oldest).total_seconds()
+            for timestamp in timestamps
+        ]
+
         if not len(set(len(file.groups) for file in files)) == 1:
             message = (
                 "Can't merge files: "
@@ -931,26 +1612,18 @@ class MDF(object):
             )
             raise MdfException(message)
 
-        if memory not in ('full', 'low', 'minimum'):
-            memory = 'full'
-
-        if outversion not in SUPPORTED_VERSIONS:
-            message = (
-                'Unknown output mdf version "{}".'
-                ' Available versions are {}.'
-                ' Automatically using version 4.10'
-            )
-            warn(message.format(outversion, SUPPORTED_VERSIONS))
-            version = '4.10'
-        else:
-            version = outversion
+        version = validate_version_argument(outversion)
+        memory = validate_memory_argument(memory)
 
         merged = MDF(
             version=version,
             memory=memory,
         )
 
+        merged.header.start_time = files[0].header.start_time
+
         for i, groups in enumerate(zip(*(file.groups for file in files))):
+
             channels_nr = set(len(group['channels']) for group in groups)
             if not len(channels_nr) == 1:
                 message = (
@@ -960,7 +1633,7 @@ class MDF(object):
                 raise MdfException(message.format(i))
 
             mdf = files[0]
-            excluded_channels = mdf._excluded_channels(i)
+            included_channels = mdf._included_channels(i)
             channels_nr = len(groups[0]['channels'])
 
             if memory == 'minimum':
@@ -1032,18 +1705,26 @@ class MDF(object):
 
             idx = 0
             last_timestamp = None
-            for group, mdf in zip(groups, files):
+            for offset, group, mdf in zip(offsets, groups, files):
                 if read_size:
                     mdf.configure(read_fragment_size=int(read_size))
+
+                parents, dtypes = mdf._prepare_record(group)
+                group['parents'], group['types'] = parents, dtypes
 
                 data = mdf._load_group_data(group)
 
                 for fragment in data:
+                    if dtypes.itemsize:
+                        group['record'] = np.core.records.fromstring(
+                            fragment[0],
+                            dtype=dtypes,
+                        )
+                    else:
+                        group['record'] = None
                     if idx == 0:
                         signals = []
-                        for j in range(channels_nr):
-                            if j in excluded_channels:
-                                continue
+                        for j in included_channels:
                             sig = mdf.get(
                                 group=i,
                                 index=j,
@@ -1051,8 +1732,11 @@ class MDF(object):
                                 raw=True,
                             )
 
+                            if offset:
+                                sig.timestamps = sig.timestamps + offset
+
                             if version < '4.00' and sig.samples.dtype.kind == 'S':
-                                string_dtypes = []
+                                string_dtypes = [np.dtype('S'), ]
                                 for tmp_mdf in files:
                                     strsig = tmp_mdf.get(
                                         group=i,
@@ -1060,10 +1744,12 @@ class MDF(object):
                                         samples_only=True,
                                     )
                                     string_dtypes.append(strsig.dtype)
+                                    del strsig
 
-                                sig.samples = sig.samples.astype(max(string_dtypes))
+                                sig.samples = sig.samples.astype(
+                                    max(string_dtypes)
+                                )
 
-                                del strsig
                                 del string_dtypes
 
                             if not sig.samples.flags.writeable:
@@ -1078,6 +1764,8 @@ class MDF(object):
                         idx += 1
                     else:
                         master = mdf.get_master(i, fragment)
+                        if offset:
+                            master = master + offset
                         if len(master):
                             if last_timestamp is None:
                                 last_timestamp = master[-1]
@@ -1089,9 +1777,7 @@ class MDF(object):
 
                             signals = [master, ]
 
-                            for j in range(channels_nr):
-                                if j in excluded_channels:
-                                    continue
+                            for j in included_channels:
                                 signals.append(
                                     mdf.get(
                                         group=i,
@@ -1104,6 +1790,188 @@ class MDF(object):
 
                             merged.extend(i, signals)
                         idx += 1
+
+                    del group['record']
+
+        for file in files:
+            merged._transfer_events(file)
+        return merged
+
+    @staticmethod
+    def merge(files, outversion='4.10', memory='full'):
+        """ concatenates several files. The files
+        must have the same internal structure (same number of groups, and same
+        channels in each group)
+
+        Parameters
+        ----------
+        files : list | tuple
+            list of *MDF* file names or *MDF* instances
+        outversion : str
+            merged file version
+        memory : str
+            memory option; default *full*
+
+        Returns
+        -------
+        concatenate : MDF
+            new *MDF* object with concatenated channels
+
+        Raises
+        ------
+        MdfException : if there are inconsistencies between the files
+
+        """
+        return MDF.concatenate(files, outversion, memory)
+
+    @staticmethod
+    def stack(files, outversion='4.10', memory='full', sync=True):
+        """ merge several files and return the merged *MDF* object
+
+        Parameters
+        ----------
+        files : list | tuple
+            list of *MDF* file names or *MDF* instances
+        outversion : str
+            merged file version
+        memory : str
+            memory option; default *full*
+        sync : bool
+            sync the files based on the start of measurement, default *True*
+
+        Returns
+        -------
+        merged : MDF
+            new *MDF* object with merge channels
+
+        """
+        if not files:
+            raise MdfException('No files given for merge')
+
+        version = validate_version_argument(outversion)
+        memory = validate_memory_argument(memory)
+
+        merged = MDF(
+            version=version,
+            memory=memory,
+        )
+
+        if sync:
+            timestamps = []
+            for file in files:
+                if isinstance(file, MDF):
+                    timestamps.append(file.header.start_time)
+                else:
+                    with open(file, 'rb') as mdf:
+                        mdf.seek(64)
+                        blk_id = mdf.read(2)
+                        if blk_id == b'HD':
+                            header = HeaderV3
+                        else:
+                            blk_id += mdf.read(2)
+                            if blk_id == b'##HD':
+                                header = HeaderV4
+                            else:
+                                raise MdfException('"{}" is not a valid MDF file'.format(file))
+
+                        header = header(
+                            address=64,
+                            stream=mdf,
+                        )
+
+                        timestamps.append(header.start_time)
+
+            oldest = min(timestamps)
+            offsets = [
+                (timestamp - oldest).total_seconds()
+                for timestamp in timestamps
+            ]
+
+            merged.header.start_time = oldest
+
+        files = (
+            file if isinstance(file, MDF) else MDF(file, memory)
+            for file in files
+        )
+
+        for offset, mdf in zip(offsets, files):
+            for i, group in enumerate(mdf.groups):
+                idx = 0
+                channels_nr = len(group['channels'])
+                included_channels = mdf._included_channels(i)
+
+                parents, dtypes = mdf._prepare_record(group)
+                group['parents'], group['types'] = parents, dtypes
+
+                data = mdf._load_group_data(group)
+
+                for fragment in data:
+                    if dtypes.itemsize:
+                        group['record'] = np.core.records.fromstring(
+                            fragment[0],
+                            dtype=dtypes,
+                        )
+                    else:
+                        group['record'] = None
+                    if idx == 0:
+                        signals = []
+                        for j in included_channels:
+                            sig = mdf.get(
+                                group=i,
+                                index=j,
+                                data=fragment,
+                                raw=True,
+                            )
+
+                            if sync:
+                                sig.timestamps = sig.timestamps + offset
+
+                            if version < '4.00' and sig.samples.dtype.kind == 'S':
+                                string_dtypes = [np.dtype('S'), ]
+                                for tmp_mdf in files:
+                                    strsig = tmp_mdf.get(
+                                        group=i,
+                                        index=j,
+                                        samples_only=True,
+                                    )
+                                    string_dtypes.append(strsig.dtype)
+                                    del strsig
+
+                                sig.samples = sig.samples.astype(
+                                    max(string_dtypes)
+                                )
+
+                                del string_dtypes
+
+                            if not sig.samples.flags.writeable:
+                                sig.samples = sig.samples.copy()
+                            signals.append(sig)
+
+                        merged.append(signals, common_timebase=True)
+                        idx += 1
+                    else:
+                        master = mdf.get_master(i, fragment)
+                        if sync:
+                            master = master + offset
+                        if len(master):
+
+                            signals = [master, ]
+
+                            for j in included_channels:
+                                signals.append(
+                                    mdf.get(
+                                        group=i,
+                                        index=j,
+                                        data=fragment,
+                                        raw=True,
+                                        samples_only=True,
+                                    )
+                                )
+
+                            merged.extend(i, signals)
+                        idx += 1
+
+                    del group['record']
 
         return merged
 
@@ -1153,10 +2021,9 @@ class MDF(object):
             ]
 
             data = self._load_group_data(group)
-            for data_bytes in data:
-                data_bytes = (data_bytes, )
+            for fragment in data:
 
-                master.append(self.get_master(i, data=data_bytes))
+                master.append(self.get_master(i, data=fragment))
 
                 idx = 0
                 for j, _ in enumerate(group['channels']):
@@ -1166,26 +2033,19 @@ class MDF(object):
                         self.get(
                             group=i,
                             index=j,
-                            data=data_bytes,
+                            data=fragment,
                             samples_only=True,
                         )
                     )
                     idx += 1
 
-            pandas_dict = {}
+            pandas_dict = {master_name: np.concatenate(master)}
 
-            pandas_dict[master_name] = np.concatenate(master)
-
+            used_names = {master_name}
             for name, sig in zip(names, sigs):
+                name = get_unique_name(used_names, name)
+                used_names.add(name)
                 pandas_dict[name] = np.concatenate(sig)
-
-                if master_index is not None:
-                    master = self.get(
-                        group=i,
-                        index=master_index,
-                        data=data_bytes,
-                    )
-                    pandas_dict = {master.name: master.samples}
 
             yield DataFrame.from_dict(pandas_dict)
 
@@ -1206,25 +2066,24 @@ class MDF(object):
 
         """
 
-        if memory not in ('full', 'low', 'minimum'):
-            memory = self.memory
+        memory = validate_memory_argument(memory)
 
         mdf = MDF(
             version=self.version,
             memory=memory,
         )
 
+        mdf.header.start_time = self.header.start_time
+
         # walk through all groups and get all channels
         for i, group in enumerate(self.groups):
-            excluded_channels = self._excluded_channels(i)
+            included_channels = self._included_channels(i)
 
             data = self._load_group_data(group)
             for idx, fragment in enumerate(data):
                 if idx == 0:
                     sigs = []
-                    for j, _ in enumerate(group['channels']):
-                        if j in excluded_channels:
-                            continue
+                    for j in included_channels:
                         sig = self.get(
                             group=i,
                             index=j,
@@ -1253,22 +2112,20 @@ class MDF(object):
                 else:
                     sigs = [self.get_master(i, data=fragment, raster=raster), ]
 
-                    for j, _ in enumerate(group['channels']):
-                        if j in excluded_channels:
-                            continue
-                        else:
-                            sig = self.get(
-                                group=i,
-                                index=j,
-                                data=fragment,
-                                raw=True,
-                                samples_only=True,
-                                raster=raster,
-                            )
-                            if not sig.flags.writeable:
-                                sig = sig.copy()
-                            sigs.append(sig)
+                    for j in included_channels:
+                        sig = self.get(
+                            group=i,
+                            index=j,
+                            data=fragment,
+                            raw=True,
+                            samples_only=True,
+                            raster=raster,
+                        )
+                        if not sig.flags.writeable:
+                            sig = sig.copy()
+                        sigs.append(sig)
                     mdf.extend(i, sigs)
+        mdf._transfer_events(self)
         return mdf
 
     def select(self, channels, dataframe=False):
@@ -1368,14 +2225,24 @@ class MDF(object):
         for group in gps:
             grp = self.groups[group]
             data = self._load_group_data(grp)
+            parents, dtypes = self._prepare_record(grp)
+            grp['parents'], grp['types'] = parents, dtypes
 
             for fragment in data:
+                if dtypes.itemsize:
+                    grp['record'] = np.core.records.fromstring(
+                        fragment[0],
+                        dtype=dtypes,
+                    )
+                else:
+                    grp['record'] = None
                 for index in gps[group]:
                     signal = self.get(group=group, index=index, data=fragment)
                     if (group, index) not in signal_parts:
                         signal_parts[(group, index)] = [signal, ]
                     else:
                         signal_parts[(group, index)].append(signal)
+                del grp['record']
 
         signals = []
         for pair in indexes:

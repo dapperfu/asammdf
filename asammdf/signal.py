@@ -1,39 +1,23 @@
 # -*- coding: utf-8 -*-
 """ asammdf *Signal* class module for time correct signal processing """
 
+from textwrap import fill
+
 import numpy as np
 import warnings
 
-from .utils import MdfException
+from .utils import MdfException, extract_cncomment_xml
+from . import v2_v3_blocks as v3b
+from . import v4_constants as v4c
+from . import v4_blocks as v4b
+
 from .version import __version__
-
-
-class SignalConversions(object):
-    """
-    types of generic conversions found in the `Signal` conversion attribute.
-    This holds all the conversion types found in the mdf versions 3 and 4
-    """
-
-    CONVERSION_NONE = 0
-    CONVERSION_LINEAR = 1
-    CONVERSION_RATIONAL = 2
-    CONVERSION_ALGEBRAIC = 3
-    CONVERSION_POLYNOMIAL = 4
-    CONVERSION_TAB = 5
-    CONVERSION_TABI = 6
-    CONVERSION_TABX = 7
-    CONVERSION_RTAB = 8
-    CONVERSION_RTABX = 9
-    CONVERSION_TTAB = 10
-    CONVERSION_TRANS = 11
-    CONVERSION_EXPO = 12
-    CONVERSION_LOGH = 13
 
 
 class Signal(object):
     """
-    The *Signal* represents a hannel described by it's samples and timestamps.
-    It can perform aritmethic operations agains other *Signal* or numeric types.
+    The *Signal* represents a channel described by it's samples and timestamps.
+    It can perform arithmetic operations against other *Signal* or numeric types.
     The operations are computed in respect to the timestamps (time correct).
     The non-float signals are not interpolated, instead the last value relative
     to the current timestamp is used.
@@ -49,13 +33,19 @@ class Signal(object):
         signal unit
     name : str
         signal name
-    conversion : dict
-        dict that contains extra conversionrmation about the signal ,
+    conversion : dict | channel conversion block
+        dict that contains extra conversion information about the signal ,
         default *None*
     comment : str
         signal comment, default ''
     raw : bool
         signal samples are raw values, with no physical conversion applied
+    master_metadata : list
+        master name and sync type
+    display_name : str
+        display name used by mdf version 3
+    attachment : bytes, name
+        channel attachment and name from MDF version 4
 
     """
 
@@ -68,6 +58,10 @@ class Signal(object):
         'comment',
         '_plot_axis',
         'raw',
+        'master_metadata',
+        'display_name',
+        'attachment',
+        'source',
     ]
 
     def __init__(self,
@@ -77,7 +71,11 @@ class Signal(object):
                  name='',
                  conversion=None,
                  comment='',
-                 raw=False):
+                 raw=False,
+                 master_metadata=None,
+                 display_name='',
+                 attachment=(),
+                 source=None):
 
         if samples is None or timestamps is None or name == '':
             message = ('"samples", "timestamps" and "name" are mandatory '
@@ -90,36 +88,96 @@ class Signal(object):
             if isinstance(timestamps, (list, tuple)):
                 timestamps = np.array(timestamps, dtype=np.float64)
             if not samples.shape[0] == timestamps.shape[0]:
-                message = 'samples and timestamps length missmatch ({} vs {})'
-                message = message.format(samples.shape[0], timestamps.shape[0])
+                message = '{} samples and timestamps length mismatch ({} vs {})'
+                message = message.format(
+                    name,
+                    samples.shape[0],
+                    timestamps.shape[0],
+                )
                 raise MdfException(message)
             self.samples = samples
             self.timestamps = timestamps
             self.unit = unit
             self.name = name
-            self.conversion = conversion
             self.comment = comment
             self._plot_axis = None
             self.raw = raw
+            self.master_metadata = master_metadata
+            self.display_name = display_name
+            self.attachment = attachment
+            self.source = source
 
-#    def physical(self):
-#        """ get Signal with physical conversion appplied
-#        to its samples
-#
-#        """
-#        if self.raw:
-#            pass
-#        else:
-#            return self
+            if not isinstance(conversion, (v4b.ChannelConversion, v3b.ChannelConversion)):
+                if conversion is None:
+                    pass
 
-    def __str__(self):
+                elif 'a' in conversion:
+                    conversion['conversion_type'] = v4c.CONVERSION_TYPE_LIN
+                    conversion = v4b.ChannelConversion(
+                        **conversion
+                    )
+
+                elif 'formula' in conversion:
+                    conversion['conversion_type'] = v4c.CONVERSION_TYPE_ALG
+                    conversion = v4b.ChannelConversion(
+                        **conversion
+                    )
+
+                elif 'raw_0' in conversion and 'phys_0' in conversion:
+                    conversion['conversion_type'] = v4c.CONVERSION_TYPE_TAB
+                    nr = 0
+                    while 'phys_{}'.format(nr) in conversion:
+                        nr += 1
+                    conversion['val_param_nr'] = nr
+                    conversion = v4b.ChannelConversion(
+                        **conversion
+                    )
+
+                elif 'upper_0' in conversion and 'phys_0' in conversion:
+                    conversion['conversion_type'] = v4c.CONVERSION_TYPE_RTAB
+                    nr = 0
+                    while 'phys_{}'.format(nr) in conversion:
+                        nr += 1
+                    conversion['val_param_nr'] = nr
+                    conversion = v4b.ChannelConversion(
+                        **conversion
+                    )
+                elif 'val_0' in conversion and 'text_0' in conversion:
+                    conversion['conversion_type'] = v4c.CONVERSION_TYPE_TABX
+                    nr = 0
+                    while 'text_{}'.format(nr) in conversion:
+                        nr += 1
+                    conversion['ref_param_nr'] = nr + 1
+                    conversion = v4b.ChannelConversion(
+                        **conversion
+                    )
+                elif 'upper_0' in conversion and 'text_0' in conversion:
+                    conversion['conversion_type'] = v4c.CONVERSION_TYPE_RTABX
+                    nr = 0
+                    while 'text_{}'.format(nr) in conversion:
+                        nr += 1
+                    conversion['ref_param_nr'] = nr + 1
+                    conversion = v4b.ChannelConversion(
+                        **conversion
+                    )
+                else:
+                    conversion = v4b.ChannelConversion(
+                        conversion_type=v4c.CONVERSION_TYPE_NON
+                    )
+
+            self.conversion = conversion
+
+    def __repr__(self):
         string = """<Signal {}:
 \tsamples={}
 \ttimestamps={}
 \tunit="{}"
 \tconversion={}
+\tsource={}
 \tcomment="{}"
-\traw={}>
+\tmastermeta="{}"
+\traw={}
+\tdisplay_name={}>
 """
         return string.format(
             self.name,
@@ -127,23 +185,11 @@ class Signal(object):
             self.timestamps,
             self.unit,
             self.conversion,
+            self.source,
             self.comment,
+            self.master_metadata,
             self.raw,
-        )
-
-    def __repr__(self):
-        string = (
-            'Signal(name={}, samples={}, timestamps={}, '
-            'unit={}, conversion={}, comment={}, raw={})'
-        )
-        return string.format(
-            self.name,
-            repr(self.samples),
-            repr(self.timestamps),
-            self.unit,
-            self.conversion,
-            self.comment,
-            self.raw,
+            self.display_name,
         )
 
     def plot(self):
@@ -163,17 +209,44 @@ class Signal(object):
                      fontsize=8, color='red',
                      ha='right', va='top', alpha=0.5)
 
+            name = self.name
+
             if self.comment:
                 comment = self.comment.replace('$', '')
-                plt.title('{}\n({})'.format(self.name, comment))
+                comment = extract_cncomment_xml(comment)
+                comment = fill(comment, 120).replace('\\n', ' ')
+
+                title = '{}\n({})'.format(name, comment)
+                plt.title(title)
             else:
-                plt.title(self.name)
-            plt.xlabel('Time [s]')
-            plt.ylabel('[{}]'.format(self.unit))
-            plt.plot(self.timestamps, self.samples, 'b')
-            plt.plot(self.timestamps, self.samples, 'b.')
-            plt.grid(True)
-            plt.show()
+                plt.title(name)
+            try:
+                if not self.master_metadata:
+                    plt.xlabel('Time [s]')
+                    plt.ylabel('[{}]'.format(self.unit))
+                    plt.plot(self.timestamps, self.samples, 'b')
+                    plt.plot(self.timestamps, self.samples, 'b.')
+                    plt.grid(True)
+                    plt.show()
+                else:
+                    master_name, sync_type = self.master_metadata
+                    if sync_type in (0, 1):
+                        plt.xlabel('{} [s]'.format(master_name))
+                    elif sync_type == 2:
+                        plt.xlabel('{} [deg]'.format(master_name))
+                    elif sync_type == 3:
+                        plt.xlabel('{} [m]'.format(master_name))
+                    elif sync_type == 4:
+                        plt.xlabel('{} [index]'.format(master_name))
+                    plt.ylabel('[{}]'.format(self.unit))
+                    plt.plot(self.timestamps, self.samples, 'b')
+                    plt.plot(self.timestamps, self.samples, 'b.')
+                    plt.grid(True)
+                    plt.show()
+            except ValueError:
+                raise
+                print('NU POT')
+                plt.close(fig)
         else:
             try:
                 names = self.samples.dtype.names
@@ -362,6 +435,9 @@ class Signal(object):
                         self.conversion,
                         self.comment,
                         self.raw,
+                        self.master_metadata,
+                        self.display_name,
+                        self.attachment,
                     )
                 else:
                     result = Signal(
@@ -372,6 +448,9 @@ class Signal(object):
                         self.conversion,
                         self.comment,
                         self.raw,
+                        self.master_metadata,
+                        self.display_name,
+                        self.attachment,
                     )
 
             elif stop is None:
@@ -385,6 +464,9 @@ class Signal(object):
                     self.conversion,
                     self.comment,
                     self.raw,
+                    self.master_metadata,
+                    self.display_name,
+                    self.attachment,
                 )
 
             else:
@@ -406,6 +488,9 @@ class Signal(object):
                             self.conversion,
                             self.comment,
                             self.raw,
+                            self.master_metadata,
+                            self.display_name,
+                            self.attachment,
                         )
                     else:
                         # signal is empty or start and stop are outside the
@@ -418,6 +503,9 @@ class Signal(object):
                             self.conversion,
                             self.comment,
                             self.raw,
+                            self.master_metadata,
+                            self.display_name,
+                            self.attachment,
                         )
                 else:
                     result = Signal(
@@ -428,6 +516,9 @@ class Signal(object):
                         self.conversion,
                         self.comment,
                         self.raw,
+                        self.master_metadata,
+                        self.display_name,
+                        self.attachment,
                     )
         return result
 
@@ -465,6 +556,9 @@ class Signal(object):
                 self.conversion,
                 self.comment,
                 self.raw,
+                self.master_metadata,
+                self.display_name,
+                self.attachment,
             )
         else:
             result = self
@@ -485,25 +579,44 @@ class Signal(object):
             new interpolated *Signal*
 
         """
-        if self.samples.dtype.kind == 'f':
-            s = np.interp(new_timestamps, self.timestamps, self.samples)
-        else:
-            idx = np.searchsorted(
-                self.timestamps,
-                new_timestamps,
-                side='right',
+        if not len(self.samples) or not len(new_timestamps):
+            return Signal(
+                self.samples.copy(),
+                self.timestamps.copy(),
+                self.unit,
+                self.name,
+                comment=self.comment,
+                conversion=self.conversion,
+                raw=self.raw,
+                master_metadata=self.master_metadata,
+                display_name=self.display_name,
+                attachment=self.attachment,
             )
-            idx -= 1
-            idx = np.clip(idx, 0, idx[-1])
-            s = self.samples[idx]
-        return Signal(
-            s,
-            new_timestamps,
-            self.unit,
-            self.name,
-            self.conversion,
-            self.raw,
-        )
+        else:
+            if self.samples.dtype.kind == 'f':
+                s = np.interp(new_timestamps, self.timestamps, self.samples)
+            else:
+                idx = np.searchsorted(
+                    self.timestamps,
+                    new_timestamps,
+                    side='right',
+                )
+                idx -= 1
+                idx = np.clip(idx, 0, idx[-1])
+                s = self.samples[idx]
+
+            return Signal(
+                s,
+                new_timestamps,
+                self.unit,
+                self.name,
+                comment=self.comment,
+                conversion=self.conversion,
+                raw=self.raw,
+                master_metadata=self.master_metadata,
+                display_name=self.display_name,
+                attachment=self.attachment,
+            )
 
     def __apply_func(self, other, func_name):
         """ delegate operations to the *samples* attribute, but in a time
@@ -531,6 +644,9 @@ class Signal(object):
             self.name,
             self.conversion,
             self.raw,
+            self.master_metadata,
+            self.display_name,
+            attachment=self.attachment,
         )
 
     def __pos__(self):
@@ -544,6 +660,9 @@ class Signal(object):
             self.name,
             self.conversion,
             self.raw,
+            self.master_metadata,
+            self.display_name,
+            self.attachment,
         )
 
     def __round__(self, n):
@@ -554,6 +673,9 @@ class Signal(object):
             self.name,
             self.conversion,
             self.raw,
+            self.master_metadata,
+            self.display_name,
+            self.attachment,
         )
 
     def __sub__(self, other):
@@ -617,6 +739,9 @@ class Signal(object):
             self.name,
             self.conversion,
             self.raw,
+            self.master_metadata,
+            self.display_name,
+            self.attachment,
         )
 
     def __lshift__(self, other):
@@ -666,6 +791,9 @@ class Signal(object):
             self.name,
             self.conversion,
             self.raw,
+            self.master_metadata,
+            self.display_name,
+            self.attachment,
         )
 
     def __getitem__(self, val):
@@ -695,6 +823,37 @@ class Signal(object):
             self.name,
             self.conversion,
             self.raw,
+            self.master_metadata,
+            self.display_name,
+            self.attachment,
+        )
+
+    def physical(self):
+        """
+        get the physical samples values
+
+        Returns
+        -------
+        phys : Signal
+            new *Signal* with physical values
+
+        """
+
+        if not self.raw or self.conversion is None:
+            samples = self.samples.copy()
+        else:
+            samples = self.conversion.convert(self.samples)
+
+        return Signal(
+            samples,
+            self.timestamps.copy(),
+            unit=self.unit,
+            name=self.name,
+            raw=False,
+            comment=self.comment,
+            master_metadata=self.master_metadata,
+            display_name=self.display_name,
+            attachment=self.attachment,
         )
 
 

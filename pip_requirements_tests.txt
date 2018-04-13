@@ -1,5 +1,8 @@
+cantools
 xmlrunner
 coverage
 codacy-coverage
 numpy>=1.13.1
-guzzle_sphinx_theme
+sphinx_rtd_theme
+pylint >= 1.8
+canmatrix
