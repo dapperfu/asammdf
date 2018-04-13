@@ -2,6 +2,7 @@
 .PHONY: update
 update:
 	git fetch upstream --verbose
+	git merge upstream/master
 
 .PHONY: upstream
 upstream:
