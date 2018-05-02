@@ -29,28 +29,9 @@ with open(os.path.join('..', 'asammdf', 'version.py'), 'r') as f:
             break
 
 print('version', asam_version)
-import guzzle_sphinx_theme
 
-html_theme_path = guzzle_sphinx_theme.html_theme_path()
-html_theme = 'guzzle_sphinx_theme'
-# Guzzle theme options (see theme.conf for more information)
-# Register the theme as an extension to generate a sitemap.xml
+html_theme = "sphinx_rtd_theme"
 
-
-# Guzzle theme options (see theme.conf for more information)
-html_theme_options = {
-
-    # Set the name of the project to appear in the left sidebar.
-    "project_nav_name": "asammdf {}".format(asam_version),
-
-
-
-    # Allow a separate homepage from the master_doc
-    "homepage": "index",
-
-    # Allow the project link to be overriden to a custom URL.
-    "projectlink": "http://github.com/danielhrisca/asammdf",
-}
 
 # -- General configuration ------------------------------------------------
 
@@ -70,8 +51,6 @@ extensions = ['sphinx.ext.autodoc',
     'sphinxarg.ext',
     'numpydoc']
     
-extensions.append("guzzle_sphinx_theme")
-
 # silence the Sphinx warnings about
 # "WARNING: toctree contains reference to nonexisting document"
 # http://stackoverflow.com/questions/12206334/sphinx-autosummary-toctree-contains-reference-to-nonexisting-document-warnings
@@ -92,7 +71,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'asammdf'
-copyright = '2017, Daniel Hrisca'
+copyright = '2018, Daniel Hrisca'
 author = 'Daniel Hrisca'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -140,6 +119,7 @@ todo_include_todos = False
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 # html_static_path = ['_static']
+html_logo = '../asammdf.png'
 
 
 # -- Options for HTMLHelp output ------------------------------------------

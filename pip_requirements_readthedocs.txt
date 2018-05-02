@@ -1,3 +1,4 @@
+cantools
 numpydoc
 numexpr
 numpy
@@ -6,4 +7,4 @@ matplotlib
 wheel
 sphinx-argparse
 sphinx_autobuild
-guzzle_sphinx_theme
+sphinx_rtd_theme

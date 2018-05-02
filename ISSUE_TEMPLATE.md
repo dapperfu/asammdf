@@ -1,10 +1,35 @@
-Please write here the output of printing ``sys.version``
+# Python version
+_Please run the following snippet and write the output here_
+```python
+import platform
+import sys
+from pprint import pprint
 
-# Platform information
-Please write here the output of printing ``platform.platform()``
+pprint("python=" + sys.version)
+pprint("os=" + platform.platform())
 
-# _asammdf_ version
-Please write here the output of printing ``asammdf.__version__``
+try:
+    import numpy
+    pprint("numpy=" + numpy.__version__)
+except ImportError:
+    pass
 
+try:
+    import asammdf
+    pprint("asammdf=" + asammdf.__version__)
+except ImportError:
+    pass
+```
+# Code 
+
+  ## MDF version
+  _please write here the file version (you can run ``print(MDF(file).version)``)
+
+  ## Code snippet
+  _please write here the code snippet that triggers the error_
+  
+  ## Traceback
+  _please write here the error traceback_
+  
 # Description
-Please describe the issue here.
+_Please describe the issue here._

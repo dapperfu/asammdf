@@ -4,6 +4,25 @@
 
 *asammdf* works on Python 2.7, and Python >= 3.4 (Travis CI tests done with Python 2.7 and Python >= 3.5)
 
+
+Status
+======
+
++-------------+----------------+-------------------+-----------------+---------------+
+|             | Travis CI      | Coverage          | Codacy          | ReadTheDocs   |
++=============+================+===================+=================+===============+
+| master      | |Build Master| | |Coverage Master| | |Codacy Master| | |Docs Master| |
++-------------+----------------+-------------------+-----------------+---------------+
+| development | |Build Status| | |Coverage Badge|  | |Codacy Badge|  | |Docs Status| |
++-------------+----------------+-------------------+-----------------+---------------+
+
++----------------+-----------------------+--------------------------+
+| PyPI           | conda-forge           | anaconda-cloud           |
++================+=======================+==========================+
+| |PyPI version| | |conda-forge version| | |anaconda-cloud version| |
++----------------+-----------------------+--------------------------+
+
+
 Project goals
 =============
 The main goals for this library are:
@@ -18,13 +37,15 @@ Features
 * create new mdf files from scratch
 * append new channels
 * read unsorted MDF v3 and v4 files
+* read CAN bus logging files
 * filter a subset of channels from original mdf file
 * cut measurement to specified time interval
 * convert to different mdf version
-* export to Excel, HDF5, Matlab and CSV
-* merge multiple files sharing the same internal structure
+* export to pandas, Excel, HDF5, Matlab (v4, v5 and v7.3) and CSV
+* merge (concatenate) multiple files sharing the same internal structure
 * read and save mdf version 4.10 files containing zipped data blocks
-* disk space savings by compacting 1-dimensional integer channels (configurable)
+* space optimizations for saved files (no duplicated blocks)
+* split large data blocks (configurable size) for mdf version 4
 * full support (read, append, save) for the following map types (multidimensional array channels):
 
     * mdf version 3 channels with CDBLOCK
@@ -36,30 +57,33 @@ Features
         * 2 - look-up
         
 * add and extract attachments for mdf version 4
-* files are loaded in RAM for fast operations
-* handle large files (exceeding the available RAM) using *memory* = *minimum* argument
+* handle large files (for example merging two files, each with 14000 channels and 5GB size, on a RaspberryPi) using *memory* = *minimum* argument
 * extract channel data, master channel and extra channel information as *Signal* objects for unified operations with v3 and v4 files
 * time domain operation using the *Signal* class
 
     * Pandas data frames are good if all the channels have the same time based
-    * usually a measurement will have channels from different sources at different rates
+    * a measurement will usually have channels from different sources at different rates
     * the *Signal* class facilitates operations with such channels
+    
+ * graphical interface to visualize channels and perform operations with the files
+
 
 Major features not implemented (yet)
 ====================================
 
 * for version 3
 
-    * functionality related to sample reduction block (but the class is defined)
+    * functionality related to sample reduction block
     
 * for version 4
 
-    * handling of bus logging measurements
+    * functionality related to sample reduction block
+    * handling of channel hierarchy
+    * full handling of bus logging measurements
     * handling of unfinished measurements (mdf 4)
     * full support for remaining mdf 4 channel arrays types
-    * xml schema for TXBLOCK and MDBLOCK
-    * partial conversions
-    * event blocks
+    * xml schema for MDBLOCK
+    * full handling of event blocks
     * channels with default X axis
     * chanenls with reference to attachment
 
@@ -95,16 +119,33 @@ Documentation
 =============
 http://asammdf.readthedocs.io/en/master
 
+Contributing
+============
+Please have a look over the [contributing guidelines](https://github.com/danielhrisca/asammdf/blob/master/CONTRIBUTING.md)
+
+Contributors
+------------
+Thanks to all who contributed with commits to *asammdf*:
+* Julien Grave `JulienGrv <https://github.com/JulienGrv>`_.
+* Jed Frey `jed-frey <https://github.com/jed-frey>`_.
+* Mihai `yahym <https://github.com/yahym>`_.
+* Jack Weinstein `jacklev <https://github.com/jacklev>`_.
+* Isuru Fernando `isuruf <https://github.com/isuruf>`_.
+* Felix Kohlgrüber `fkohlgrueber <https://github.com/fkohlgrueber>`_.
+
 Installation
 ============
 *asammdf* is available on 
 
 * github: https://github.com/danielhrisca/asammdf/
 * PyPI: https://pypi.org/project/asammdf/
+* conda-forge: https://anaconda.org/conda-forge/asammdf
     
 .. code-block: python
 
    pip install asammdf
+   # or for anaconda
+   conda install -c conda-forge asammdf
 
     
 Dependencies
@@ -116,16 +157,20 @@ asammdf uses the following libraries
 * matplotlib : for Signal plotting
 * wheel : for installation in virtual environments
 * pandas : for DataFrame export
+* canmatrix : to handle CAN bus logging measurements
 
 optional dependencies needed for exports
 
 * h5py : for HDF5 export
 * xlsxwriter : for Excel export
-* scipy : for Matlab .mat export
+* scipy : for Matlab v4 and v5 .mat export
+* hdf5storage : for Matlab v7.3 .mat export
 
 other optional dependencies
 
 * chardet : to detect non-standard unicode encodings
+* PyQt5 : for GUI tool
+* pyqtgraph : for GUI tool
 
 
 Benchmarks
@@ -240,3 +285,28 @@ mdfreader 2.7.5 mdfv4                                  21423     1309
 mdfreader 2.7.5 noDataLoading mdfv4                    20142     1352
 mdfreader 2.7.5 compress mdfv4                         20600     1309
 ================================================== ========= ========
+
+
+.. |Build Master| image:: https://travis-ci.org/danielhrisca/asammdf.svg?branch=master
+   :target: https://travis-ci.org/danielhrisca/asammdf
+.. |Coverage Master| image:: https://api.codacy.com/project/badge/Coverage/a3da21da90ca43a5b72fc24b56880c99?branch=master
+   :target: https://www.codacy.com/app/danielhrisca/asammdf?utm_source=github.com&utm_medium=referral&utm_content=danielhrisca/asammdf&utm_campaign=Badge_Coverage
+.. |Codacy Master| image:: https://api.codacy.com/project/badge/Grade/a3da21da90ca43a5b72fc24b56880c99?branch=master
+   :target: https://www.codacy.com/app/danielhrisca/asammdf?utm_source=github.com&utm_medium=referral&utm_content=danielhrisca/asammdf&utm_campaign=badger
+.. |Docs Master| image:: http://readthedocs.org/projects/asammdf/badge/?version=master
+   :target: http://asammdf.readthedocs.io/en/master/?badge=stable
+.. |Build Status| image:: https://travis-ci.org/danielhrisca/asammdf.svg?branch=development
+   :target: https://travis-ci.org/danielhrisca/asammdf
+.. |Coverage Badge| image:: https://api.codacy.com/project/badge/Coverage/a3da21da90ca43a5b72fc24b56880c99?branch=development
+   :target: https://www.codacy.com/app/danielhrisca/asammdf?utm_source=github.com&utm_medium=referral&utm_content=danielhrisca/asammdf&utm_campaign=Badge_Coverage
+.. |Codacy Badge| image:: https://api.codacy.com/project/badge/Grade/a3da21da90ca43a5b72fc24b56880c99?branch=development
+   :target: https://www.codacy.com/app/danielhrisca/asammdf?utm_source=github.com&utm_medium=referral&utm_content=danielhrisca/asammdf&utm_campaign=badger
+.. |Docs Status| image:: http://readthedocs.org/projects/asammdf/badge/?version=development
+   :target: http://asammdf.readthedocs.io/en/master/?badge=stable
+.. |PyPI version| image:: https://badge.fury.io/py/asammdf.svg
+   :target: https://badge.fury.io/py/asammdf
+.. |conda-forge version| image:: https://anaconda.org/conda-forge/asammdf/badges/version.svg
+   :target: https://anaconda.org/conda-forge/asammdf
+.. |anaconda-cloud version| image:: https://anaconda.org/daniel.hrisca/asammdf/badges/version.svg
+   :target: https://anaconda.org/daniel.hrisca/asammdf
+

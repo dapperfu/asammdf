@@ -18,9 +18,11 @@ Welcome to asammdf's documentation!
    
    intro
    api
+   buslogging
    tips
    examples
    benchmarks
+   gui
 
 
 Indices and tables

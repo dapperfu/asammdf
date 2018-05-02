@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """ MDF v2 and v3 constants """
 
+
 # byte order
 BYTE_ORDER_INTEL = 0
 BYTE_ORDER_MOTOROLA = 1
@@ -294,7 +295,7 @@ KEYS_CONVESION_NONE = (
     'ref_param_nr',
 )
 
-FMT_CONVERSION_FORMULA = '<2s2H2d20s2H256s'
+FMT_CONVERSION_FORMULA = '<2s2H2d20s2H{}s'
 KEYS_CONVESION_FORMULA = (
     'id',
     'block_len',

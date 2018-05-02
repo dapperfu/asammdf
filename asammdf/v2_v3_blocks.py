@@ -5,16 +5,25 @@ from __future__ import division, print_function
 
 import sys
 import time
+from datetime import datetime
 from getpass import getuser
 from struct import pack, unpack, unpack_from
+from textwrap import wrap
+
+import numpy as np
+from numexpr import evaluate
 
 from . import v2_v3_constants as v23c
-from .utils import MdfException
+from .utils import MdfException, get_text_v3
 
 PYVERSION = sys.version_info[0]
 PYVERSION_MAJOR = sys.version_info[0] * 10 + sys.version_info[1]
 SEEK_START = v23c.SEEK_START
 SEEK_END = v23c.SEEK_END
+
+if PYVERSION < 3:
+    from .utils import bytes
+
 
 __all__ = [
     'Channel',
@@ -115,7 +124,6 @@ class Channel(dict):
     b'CN'
 
     '''
-    __slots__ = ['name', 'address', 'comment', 'display_name']
 
     def __init__(self, **kargs):
         super(Channel, self).__init__()
@@ -232,6 +240,54 @@ class Channel(dict):
                     0,
                 )
 
+    def metadata(self):
+        max_len = max(
+            len(key)
+            for key in self
+        )
+        template = '{{: <{}}}: {{}}'.format(max_len)
+
+        metadata = []
+        lines = """
+name: {}
+display name: {}
+address: {}
+comment: {}
+
+""".format(
+            self.name,
+            self.display_name,
+            hex(self.address),
+            self.comment,
+        ).split('\n')
+        for key, val in self.items():
+            if key.endswith('addr') or key.startswith('text_'):
+                lines.append(
+                    template.format(key, hex(val))
+                )
+            elif isinstance(val, float):
+                    lines.append(
+                        template.format(key, round(val, 6))
+                    )
+            else:
+                if (PYVERSION < 3 and isinstance(val, str)) or \
+                        (PYVERSION >= 3 and isinstance(val, bytes)):
+                    lines.append(
+                        template.format(key, val.strip(b'\0'))
+                    )
+                else:
+                    lines.append(
+                        template.format(key, val)
+                    )
+        for line in lines:
+            if not line:
+                metadata.append(line)
+            else:
+                for wrapped_line in wrap(line, width=120):
+                    metadata.append(wrapped_line)
+
+        return '\n'.join(metadata)
+
     def __bytes__(self):
 
         block_len = self['block_len']
@@ -274,6 +330,15 @@ class Channel(dict):
         else:
             result = 0
         return result
+
+    def __str__(self):
+        return 'Channel (name: {}, display name: {}, comment: {}, address: {}, fields: {})'.format(
+            self.name,
+            self.display_name,
+            self.comment,
+            hex(self.address),
+            super(Channel, self).__str__(),
+        )
 
 
 class ChannelConversion(dict):
@@ -360,10 +425,11 @@ class ChannelConversion(dict):
     0, 100.0
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(ChannelConversion, self).__init__()
+
+        self.referenced_blocks = {}
 
         if 'raw_bytes' in kargs or 'stream' in kargs:
             try:
@@ -375,7 +441,9 @@ class ChannelConversion(dict):
                     block,
                 )
                 size = self['block_len']
+                block_size = len(block)
                 block = block[4:]
+                stream=kargs['stream']
 
             except KeyError:
                 stream = kargs['stream']
@@ -384,8 +452,13 @@ class ChannelConversion(dict):
                 block = stream.read(4)
                 (self['id'],
                  self['block_len']) = unpack('<2sH', block)
+
                 size = self['block_len']
+                block_size = size
                 block = stream.read(size - 4)
+
+            address = kargs.get('address', 0)
+            self.address = address
 
             (self['range_flag'],
              self['min_phy_value'],
@@ -418,15 +491,33 @@ class ChannelConversion(dict):
             elif conv_type in (
                     v23c.CONVERSION_TYPE_TABI,
                     v23c.CONVERSION_TYPE_TAB):
+
                 nr = self['ref_param_nr']
-                values = unpack_from(
-                    '<{}d'.format(2 * nr),
-                    block,
-                    v23c.CC_COMMON_SHORT_SIZE,
-                )
-                for i in range(nr):
-                    (self['raw_{}'.format(i)],
-                     self['phys_{}'.format(i)]) = values[i*2], values[2*i + 1]
+
+                size = v23c.CC_COMMON_BLOCK_SIZE + nr * 16
+
+                if block_size == v23c.MAX_UINT16:
+                    stream.seek(address)
+                    raw_bytes = stream.read(size)
+                    conversion = ChannelConversion(
+                        raw_bytes=raw_bytes,
+                        stream=stream,
+                        address=address,
+                    )
+                    conversion['block_len'] = size
+
+                    self.update(conversion)
+                    self.referenced_blocks = conversion.referenced_blocks
+
+                else:
+                    values = unpack_from(
+                        '<{}d'.format(2 * nr),
+                        block,
+                        v23c.CC_COMMON_SHORT_SIZE,
+                    )
+                    for i in range(nr):
+                        (self['raw_{}'.format(i)],
+                         self['phys_{}'.format(i)]) = values[i*2], values[2*i + 1]
 
             elif conv_type in (
                     v23c.CONVERSION_TYPE_POLY,
@@ -460,32 +551,96 @@ class ChannelConversion(dict):
             elif conv_type == v23c.CONVERSION_TYPE_TABX:
                 nr = self['ref_param_nr']
 
-                values = unpack_from(
-                    '<' + 'd32s' * nr,
-                    block,
-                    v23c.CC_COMMON_SHORT_SIZE,
-                )
+                size = v23c.CC_COMMON_BLOCK_SIZE + nr * 40
 
-                for i in range(nr):
-                    (self['param_val_{}'.format(i)],
-                     self['text_{}'.format(i)]) = values[i*2], values[2*i + 1]
+                if block_size == v23c.MAX_UINT16:
+                    stream.seek(address)
+                    raw_bytes = stream.read(size)
+                    conversion = ChannelConversion(
+                        raw_bytes=raw_bytes,
+                        stream=stream,
+                        address=address,
+                    )
+                    conversion['block_len'] = size
+
+                    self.update(conversion)
+                    self.referenced_blocks = conversion.referenced_blocks
+
+                else:
+
+                    values = unpack_from(
+                        '<' + 'd32s' * nr,
+                        block,
+                        v23c.CC_COMMON_SHORT_SIZE,
+                    )
+
+                    for i in range(nr):
+                        (self['param_val_{}'.format(i)],
+                         self['text_{}'.format(i)]) = values[i*2], values[2*i + 1]
 
             elif conv_type == v23c.CONVERSION_TYPE_RTABX:
-                nr = self['ref_param_nr']
 
-                values = unpack_from(
-                    '<' + '2dI' * nr,
-                    block,
-                    v23c.CC_COMMON_SHORT_SIZE,
-                )
-                for i in range(nr):
-                    (self['lower_{}'.format(i)],
-                     self['upper_{}'.format(i)],
-                     self['text_{}'.format(i)]) = (
-                        values[i*3],
-                        values[3*i + 1],
-                        values[3*i + 2],
+                nr = self['ref_param_nr'] - 1
+
+                size = v23c.CC_COMMON_BLOCK_SIZE + (nr + 1) * 20
+
+                if block_size == v23c.MAX_UINT16:
+                    stream.seek(address)
+                    raw_bytes = stream.read(size)
+                    conversion = ChannelConversion(
+                        raw_bytes=raw_bytes,
+                        stream=stream,
+                        address=address,
                     )
+                    conversion['block_len'] = size
+
+                    self.update(conversion)
+                    self.referenced_blocks = conversion.referenced_blocks
+
+                else:
+
+                    (self['default_lower'],
+                     self['default_upper'],
+                     self['default_addr']) = unpack_from(
+                        '<2dI',
+                        block,
+                        v23c.CC_COMMON_SHORT_SIZE,
+                    )
+
+                    if self['default_addr']:
+                        self.referenced_blocks['default_addr'] = TextBlock(
+                            address=self['default_addr'],
+                            stream=stream,
+                        )
+                    else:
+                        self.referenced_blocks['default_addr'] = TextBlock(
+                            text='',
+                        )
+
+                    values = unpack_from(
+                        '<' + '2dI' * nr,
+                        block,
+                        v23c.CC_COMMON_SHORT_SIZE + 20,
+                    )
+                    for i in range(nr):
+                        (self['lower_{}'.format(i)],
+                         self['upper_{}'.format(i)],
+                         self['text_{}'.format(i)]) = (
+                            values[i*3],
+                            values[3*i + 1],
+                            values[3*i + 2],
+                        )
+                        if values[3*i + 2]:
+                            block = TextBlock(
+                                address=values[3*i + 2],
+                                stream=stream,
+                            )
+                            self.referenced_blocks['text_{}'.format(i)] = block
+
+                        else:
+                            self.referenced_blocks['text_{}'.format(i)] = TextBlock(
+                                text='',
+                            )
 
             if self['id'] != b'CC':
                 message = 'Expected "CC" block but found "{}"'
@@ -497,28 +652,22 @@ class ChannelConversion(dict):
             self['id'] = 'CC'.encode('latin-1')
 
             if kargs['conversion_type'] == v23c.CONVERSION_TYPE_NONE:
-                self['block_len'] = kargs.get(
-                    'block_len',
-                    v23c.CC_COMMON_BLOCK_SIZE,
-                )
+                self['block_len'] = v23c.CC_COMMON_BLOCK_SIZE
                 self['range_flag'] = kargs.get('range_flag', 1)
                 self['min_phy_value'] = kargs.get('min_phy_value', 0)
                 self['max_phy_value'] = kargs.get('max_phy_value', 0)
                 self['unit'] = kargs.get('unit', ('\0' * 20).encode('latin-1'))
                 self['conversion_type'] = v23c.CONVERSION_TYPE_NONE
-                self['ref_param_nr'] = kargs.get('ref_param_nr', 0)
+                self['ref_param_nr'] = 0
 
             elif kargs['conversion_type'] == v23c.CONVERSION_TYPE_LINEAR:
-                self['block_len'] = kargs.get(
-                    'block_len',
-                    v23c.CC_LIN_BLOCK_SIZE,
-                )
+                self['block_len'] = v23c.CC_LIN_BLOCK_SIZE
                 self['range_flag'] = kargs.get('range_flag', 1)
                 self['min_phy_value'] = kargs.get('min_phy_value', 0)
                 self['max_phy_value'] = kargs.get('max_phy_value', 0)
                 self['unit'] = kargs.get('unit', ('\0' * 20).encode('latin-1'))
                 self['conversion_type'] = v23c.CONVERSION_TYPE_LINEAR
-                self['ref_param_nr'] = kargs.get('ref_param_nr', 2)
+                self['ref_param_nr'] = 2
                 self['b'] = kargs.get('b', 0)
                 self['a'] = kargs.get('a', 1)
                 if not self['block_len'] == v23c.CC_LIN_BLOCK_SIZE:
@@ -527,19 +676,13 @@ class ChannelConversion(dict):
             elif kargs['conversion_type'] in (
                     v23c.CONVERSION_TYPE_POLY,
                     v23c.CONVERSION_TYPE_RAT):
-                self['block_len'] = kargs.get(
-                    'block_len',
-                    v23c.CC_POLY_BLOCK_SIZE,
-                )
+                self['block_len'] = v23c.CC_POLY_BLOCK_SIZE
                 self['range_flag'] = kargs.get('range_flag', 1)
                 self['min_phy_value'] = kargs.get('min_phy_value', 0)
                 self['max_phy_value'] = kargs.get('max_phy_value', 0)
                 self['unit'] = kargs.get('unit', ('\0' * 20).encode('latin-1'))
-                self['conversion_type'] = kargs.get(
-                    'conversion_type',
-                    v23c.CONVERSION_TYPE_POLY,
-                )
-                self['ref_param_nr'] = kargs.get('ref_param_nr', 6)
+                self['conversion_type'] = kargs['conversion_type']
+                self['ref_param_nr'] = 6
                 self['P1'] = kargs.get('P1', 0)
                 self['P2'] = kargs.get('P2', 0)
                 self['P3'] = kargs.get('P3', 0)
@@ -550,19 +693,13 @@ class ChannelConversion(dict):
             elif kargs['conversion_type'] in (
                     v23c.CONVERSION_TYPE_EXPO,
                     v23c.CONVERSION_TYPE_LOGH):
-                self['block_len'] = kargs.get(
-                    'block_len',
-                    v23c.CC_EXPO_BLOCK_SIZE,
-                )
+                self['block_len'] = v23c.CC_EXPO_BLOCK_SIZE
                 self['range_flag'] = kargs.get('range_flag', 1)
                 self['min_phy_value'] = kargs.get('min_phy_value', 0)
                 self['max_phy_value'] = kargs.get('max_phy_value', 0)
                 self['unit'] = kargs.get('unit', ('\0' * 20).encode('latin-1'))
-                self['conversion_type'] = kargs.get(
-                    'conversion_type',
-                    v23c.CONVERSION_TYPE_EXPO,
-                )
-                self['ref_param_nr'] = kargs.get('ref_param_nr', 7)
+                self['conversion_type'] = v23c.CONVERSION_TYPE_EXPO
+                self['ref_param_nr'] = 7
                 self['P1'] = kargs.get('P1', 0)
                 self['P2'] = kargs.get('P2', 0)
                 self['P3'] = kargs.get('P3', 0)
@@ -574,7 +711,10 @@ class ChannelConversion(dict):
             elif kargs['conversion_type'] == v23c.CONVERSION_TYPE_FORMULA:
                 formula = kargs['formula']
                 formula_len = len(formula)
-                formula += b'\0'
+                try:
+                    formula += b'\0'
+                except:
+                    formula = formula.encode('latin-1') + b'\0'
                 self['block_len'] = 46 + formula_len + 1
                 self['range_flag'] = kargs.get('range_flag', 1)
                 self['min_phy_value'] = kargs.get('min_phy_value', 0)
@@ -593,21 +733,15 @@ class ChannelConversion(dict):
                 self['min_phy_value'] = kargs.get('min_phy_value', 0)
                 self['max_phy_value'] = kargs.get('max_phy_value', 0)
                 self['unit'] = kargs.get('unit', ('\0' * 20).encode('latin-1'))
-                self['conversion_type'] = kargs.get(
-                    'conversion_type',
-                    v23c.CONVERSION_TYPE_TABI,
-                )
-                self['ref_param_nr'] = kargs.get('ref_param_nr', 2)
+                self['conversion_type'] = kargs['conversion_type']
+                self['ref_param_nr'] = nr
                 for i in range(nr):
                     self['raw_{}'.format(i)] = kargs['raw_{}'.format(i)]
                     self['phys_{}'.format(i)] = kargs['phys_{}'.format(i)]
 
             elif kargs['conversion_type'] == v23c.CONVERSION_TYPE_TABX:
                 nr = kargs['ref_param_nr']
-                self['block_len'] = kargs.get(
-                    'block_len',
-                    v23c.CC_COMMON_BLOCK_SIZE + 40 * nr,
-                )
+                self['block_len'] = v23c.CC_COMMON_BLOCK_SIZE + 40 * nr
                 self['range_flag'] = kargs.get('range_flag', 0)
                 self['min_phy_value'] = kargs.get('min_phy_value', 0)
                 self['max_phy_value'] = kargs.get('max_phy_value', 0)
@@ -620,26 +754,293 @@ class ChannelConversion(dict):
                     self['text_{}'.format(i)] = kargs['text_{}'.format(i)]
 
             elif kargs['conversion_type'] == v23c.CONVERSION_TYPE_RTABX:
-                nr = kargs.get('ref_param_nr', 0)
-                self['block_len'] = kargs.get(
-                    'block_len',
-                    v23c.CC_COMMON_BLOCK_SIZE + 20 * nr,
-                )
+                nr = kargs['ref_param_nr']
+                self['block_len'] = v23c.CC_COMMON_BLOCK_SIZE + 20 * nr
                 self['range_flag'] = kargs.get('range_flag', 0)
                 self['min_phy_value'] = kargs.get('min_phy_value', 0)
                 self['max_phy_value'] = kargs.get('max_phy_value', 0)
                 self['unit'] = kargs.get('unit', ('\0' * 20).encode('latin-1'))
                 self['conversion_type'] = v23c.CONVERSION_TYPE_RTABX
-                self['ref_param_nr'] = kargs.get('ref_param_nr', 0)
+                self['ref_param_nr'] = nr
 
-                for i in range(self['ref_param_nr']):
+                self['default_lower'] = 0
+                self['default_upper'] = 0
+                self['default_addr'] = 0
+                key = 'default_addr'
+                if key in kargs:
+                    self.referenced_blocks[key] = TextBlock(text=kargs[key])
+                else:
+                    self.referenced_blocks[key] = None
+
+                for i in range(nr - 1):
                     self['lower_{}'.format(i)] = kargs['lower_{}'.format(i)]
                     self['upper_{}'.format(i)] = kargs['upper_{}'.format(i)]
-                    self['text_{}'.format(i)] = kargs['text_{}'.format(i)]
+                    key = 'text_{}'.format(i)
+                    self[key] = 0
+                    self.referenced_blocks[key] = TextBlock(text=kargs[key])
             else:
                 message = 'Conversion type "{}" not implemented'
                 message = message.format(kargs['conversion_type'])
                 raise Exception(message)
+
+    def metadata(self, indent=''):
+        max_len = max(
+            len(key)
+            for key in self
+        )
+        template = '{{: <{}}}: {{}}'.format(max_len)
+
+        metadata = []
+        lines = """
+address: {}
+
+""".format(
+            hex(self.address),
+        ).split('\n')
+        for key, val in self.items():
+            if key.endswith('addr') or key.startswith('text_'):
+                lines.append(
+                    template.format(key, hex(val))
+                )
+            elif isinstance(val, float):
+                    lines.append(
+                        template.format(key, round(val, 6))
+                    )
+            else:
+                if (PYVERSION < 3 and isinstance(val, str)) or \
+                        (PYVERSION >= 3 and isinstance(val, bytes)):
+                    lines.append(
+                        template.format(key, val.strip(b'\0'))
+                    )
+                else:
+                    lines.append(
+                        template.format(key, val)
+                    )
+        if self.referenced_blocks:
+            max_len = max(
+                len(key)
+                for key in self.referenced_blocks
+            )
+            template = '{{: <{}}}: {{}}'.format(max_len)
+
+            lines.append('')
+            lines.append('Referenced blocks:')
+            for key, block in self.referenced_blocks.items():
+                if isinstance(block, TextBlock):
+                    lines.append(
+                        template.format(key, block['text'].strip(b'\0'))
+                    )
+                else:
+                    lines.append(template.format(key, ''))
+                    lines.extend(
+                        block.metadata(indent + '    ').split('\n')
+                    )
+
+        for line in lines:
+            if not line:
+                metadata.append(line)
+            else:
+                for wrapped_line in wrap(
+                        line,
+                        initial_indent=indent,
+                        subsequent_indent=indent,
+                        width=120):
+                    metadata.append(wrapped_line)
+
+        return '\n'.join(metadata)
+
+    def convert(self, values):
+        conversion_type = self['conversion_type']
+
+        if conversion_type == v23c.CONVERSION_TYPE_NONE:
+            pass
+
+        elif conversion_type == v23c.CONVERSION_TYPE_LINEAR:
+            a = self['a']
+            b = self['b']
+            if (a, b) != (1, 0):
+                values = values * a
+                if b:
+                    values += b
+
+        elif conversion_type in (
+                v23c.CONVERSION_TYPE_TABI,
+                v23c.CONVERSION_TYPE_TAB):
+            nr = self['ref_param_nr']
+
+            raw_vals = [
+                self['raw_{}'.format(i)]
+                for i in range(nr)
+            ]
+            raw_vals = np.array(raw_vals)
+            phys = [
+                self['phys_{}'.format(i)]
+                for i in range(nr)
+            ]
+            phys = np.array(phys)
+
+            if conversion_type == v23c.CONVERSION_TYPE_TABI:
+                values = np.interp(values, raw_vals, phys)
+            else:
+                idx = np.searchsorted(raw_vals, values)
+                idx = np.clip(idx, 0, len(raw_vals) - 1)
+                values = phys[idx]
+
+        elif conversion_type == v23c.CONVERSION_TYPE_TABX:
+            nr = self['ref_param_nr']
+            raw_vals = [
+                self['param_val_{}'.format(i)]
+                for i in range(nr)
+            ]
+            raw_vals = np.array(raw_vals)
+            phys = [
+                self['text_{}'.format(i)]
+                for i in range(nr)
+            ]
+            phys = np.array(phys)
+
+            indexes = np.searchsorted(raw_vals, values)
+
+            values = phys[indexes]
+
+        elif conversion_type == v23c.CONVERSION_TYPE_RTABX:
+            nr = self['ref_param_nr'] - 1
+
+            phys = []
+            for i in range(nr):
+                value = self.referenced_blocks['text_{}'.format(i)]
+                if value:
+                    value = value['text']
+                else:
+                    value = b''
+                phys.append(value)
+
+            phys = np.array(phys)
+
+            default = self.referenced_blocks['default_addr']
+            if default:
+                default = default['text']
+            else:
+                default = b''
+
+            if b'{X}' in default:
+                default = (
+                    default
+                    .decode('latin-1')
+                    .replace('{X}', 'X')
+                    .split('"')
+                    [1]
+                )
+                partial_conversion = True
+            else:
+                partial_conversion = False
+
+            lower = np.array(
+                [self['lower_{}'.format(i)] for i in range(nr)]
+            )
+            upper = np.array(
+                [self['upper_{}'.format(i)] for i in range(nr)]
+            )
+
+            if values.dtype.kind == 'f':
+                idx1 = np.searchsorted(lower, values, side='right') - 1
+                idx2 = np.searchsorted(upper, values, side='right')
+            else:
+                idx1 = np.searchsorted(lower, values, side='right') - 1
+                idx2 = np.searchsorted(upper, values, side='right') - 1
+
+            idx = np.argwhere(idx1 != idx2).flatten()
+
+            if partial_conversion and len(idx):
+                X = values[idx]
+                new_values = np.zeros(len(values), dtype=np.float64)
+                new_values[idx] = evaluate(default)
+
+                idx = np.argwhere(idx1 == idx2).flatten()
+                new_values[idx] = np.nan
+                values = new_values
+
+            else:
+                if len(idx):
+                    new_values = np.zeros(
+                        len(values),
+                        dtype=max(phys.dtype, np.array([default, ]).dtype),
+                    )
+                    new_values[idx] = default
+
+                    idx = np.argwhere(idx1 == idx2).flatten()
+                    new_values[idx] = phys[values[idx]]
+                    values = new_values
+                else:
+                    values = phys[idx1]
+
+        elif conversion_type in (
+                v23c.CONVERSION_TYPE_EXPO,
+                v23c.CONVERSION_TYPE_LOGH):
+            # pylint: disable=C0103
+
+            if conversion_type == v23c.CONVERSION_TYPE_EXPO:
+                func = np.log
+            else:
+                func = np.exp
+            P1 = self['P1']
+            P2 = self['P2']
+            P3 = self['P3']
+            P4 = self['P4']
+            P5 = self['P5']
+            P6 = self['P6']
+            P7 = self['P7']
+            if P4 == 0:
+                values = func(((values - P7) * P6 - P3) / P1) / P2
+            elif P1 == 0:
+                values = func((P3 / (values - P7) - P6) / P4) / P5
+            else:
+                message = 'wrong conversion {}'
+                message = message.format(conversion_type)
+                raise ValueError(message)
+
+        elif conversion_type == v23c.CONVERSION_TYPE_RAT:
+            # pylint: disable=unused-variable,C0103
+
+            P1 = self['P1']
+            P2 = self['P2']
+            P3 = self['P3']
+            P4 = self['P4']
+            P5 = self['P5']
+            P6 = self['P6']
+            if (P1, P2, P3, P4, P5, P6) != (0, 1, 0, 0, 0, 1):
+                X = values
+                values = evaluate(v23c.RAT_CONV_TEXT)
+
+        elif conversion_type == v23c.CONVERSION_TYPE_POLY:
+            # pylint: disable=unused-variable,C0103
+
+            P1 = self['P1']
+            P2 = self['P2']
+            P3 = self['P3']
+            P4 = self['P4']
+            P5 = self['P5']
+            P6 = self['P6']
+
+            X = values
+
+            coefs = (P2, P3, P5, P6)
+            if coefs == (0, 0, 0, 0):
+                if P1 != P4:
+                    values = evaluate(v23c.POLY_CONV_SHORT_TEXT)
+            else:
+                values = evaluate(v23c.POLY_CONV_LONG_TEXT)
+
+        elif conversion_type == v23c.CONVERSION_TYPE_FORMULA:
+            # pylint: disable=unused-variable,C0103
+
+            formula = self['formula'].decode('latin-1').strip(' \r\n\t\0')
+            if 'X1' not in formula:
+                formula = formula.replace('X', 'X1')
+            X1 = values
+            values = evaluate(formula)
+
+        return values
 
     def __bytes__(self):
         conv = self['conversion_type']
@@ -648,7 +1049,7 @@ class ChannelConversion(dict):
         if conv == v23c.CONVERSION_TYPE_NONE:
             fmt = v23c.FMT_CONVERSION_COMMON
         elif conv == v23c.CONVERSION_TYPE_FORMULA:
-            fmt = v23c.FMT_CONVERSION_FORMULA
+            fmt = v23c.FMT_CONVERSION_FORMULA.format(self['block_len'] - v23c.CC_COMMON_BLOCK_SIZE)
         elif conv == v23c.CONVERSION_TYPE_LINEAR:
             fmt = v23c.FMT_CONVERSION_LINEAR
             if not self['block_len'] == v23c.CC_LIN_BLOCK_SIZE:
@@ -690,7 +1091,12 @@ class ChannelConversion(dict):
             elif conv == v23c.CONVERSION_TYPE_RTABX:
                 nr = self['ref_param_nr']
                 keys = list(v23c.KEYS_CONVESION_NONE)
-                for i in range(nr):
+                keys += [
+                    'default_lower',
+                    'default_upper',
+                    'default_addr',
+                ]
+                for i in range(nr - 1):
                     keys.append('lower_{}'.format(i))
                     keys.append('upper_{}'.format(i))
                     keys.append('text_{}'.format(i))
@@ -701,11 +1107,20 @@ class ChannelConversion(dict):
                     keys.append('param_val_{}'.format(i))
                     keys.append('text_{}'.format(i))
 
+        if self['block_len'] > v23c.MAX_UINT16:
+            self['block_len'] = v23c.MAX_UINT16
         if PYVERSION_MAJOR >= 36:
             result = pack(fmt, *self.values())
         else:
             result = pack(fmt, *[self[key] for key in keys])
         return result
+
+    def __str__(self):
+        return 'ChannelConversion (referneced blocks: {}, address: {}, fields: {})'.format(
+            self.referenced_blocks,
+            hex(self.address),
+            super(ChannelConversion, self).__str__(),
+        )
 
 
 class ChannelDependency(dict):
@@ -748,7 +1163,6 @@ class ChannelDependency(dict):
         block address inside mdf file
 
     '''
-    __slots__ = ['address', 'referenced_channels']
 
     def __init__(self, **kargs):
         super(ChannelDependency, self).__init__()
@@ -877,68 +1291,69 @@ class ChannelExtension(dict):
         block address inside mdf file
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(ChannelExtension, self).__init__()
 
-        if 'raw_bytes' in kargs:
+        self.name = self.path = self.comment = ''
 
-            (self['id'],
-             self['block_len'],
-             self['type']) = unpack_from(
-                v23c.FMT_SOURCE_COMMON,
-                kargs['raw_bytes'],
-            )
-            if self['type'] == v23c.SOURCE_ECU:
-                (self['module_nr'],
-                 self['module_address'],
-                 self['description'],
-                 self['ECU_identification'],
-                 self['reserved0']) = unpack_from(
-                    v23c.FMT_SOURCE_EXTRA_ECU,
-                    kargs['raw_bytes'],
-                    6,
-                )
-            elif self['type'] == v23c.SOURCE_VECTOR:
-                (self['CAN_id'],
-                 self['CAN_ch_index'],
-                 self['message_name'],
-                 self['sender_name'],
-                 self['reserved0']) = unpack_from(
-                    v23c.FMT_SOURCE_EXTRA_VECTOR,
-                    kargs['raw_bytes'],
-                    6,
-                )
-
-            if self['id'] != b'CE':
-                message = 'Expected "CE" block but found "{}"'
-                raise MdfException(message.format(self['id']))
-
-        elif 'stream' in kargs:
+        if 'stream' in kargs:
             stream = kargs['stream']
-            self.address = address = kargs['address']
-            stream.seek(address)
-            (self['id'],
-             self['block_len'],
-             self['type']) = unpack(v23c.FMT_SOURCE_COMMON, stream.read(6))
-            block = stream.read(self['block_len'] - 6)
+            try:
 
-            if self['type'] == v23c.SOURCE_ECU:
-                (self['module_nr'],
-                 self['module_address'],
-                 self['description'],
-                 self['ECU_identification'],
-                 self['reserved0']) = unpack(v23c.FMT_SOURCE_EXTRA_ECU, block)
-            elif self['type'] == v23c.SOURCE_VECTOR:
-                (self['CAN_id'],
-                 self['CAN_ch_index'],
-                 self['message_name'],
-                 self['sender_name'],
-                 self['reserved0']) = unpack(
-                    v23c.FMT_SOURCE_EXTRA_VECTOR,
-                    block,
+                (self['id'],
+                 self['block_len'],
+                 self['type']) = unpack_from(
+                    v23c.FMT_SOURCE_COMMON,
+                    kargs['raw_bytes'],
                 )
+                if self['type'] == v23c.SOURCE_ECU:
+                    (self['module_nr'],
+                     self['module_address'],
+                     self['description'],
+                     self['ECU_identification'],
+                     self['reserved0']) = unpack_from(
+                        v23c.FMT_SOURCE_EXTRA_ECU,
+                        kargs['raw_bytes'],
+                        6,
+                    )
+                elif self['type'] == v23c.SOURCE_VECTOR:
+                    (self['CAN_id'],
+                     self['CAN_ch_index'],
+                     self['message_name'],
+                     self['sender_name'],
+                     self['reserved0']) = unpack_from(
+                        v23c.FMT_SOURCE_EXTRA_VECTOR,
+                        kargs['raw_bytes'],
+                        6,
+                    )
+
+                self.address = kargs.get('address', 0)
+            except KeyError:
+
+                self.address = address = kargs['address']
+                stream.seek(address)
+                (self['id'],
+                 self['block_len'],
+                 self['type']) = unpack(v23c.FMT_SOURCE_COMMON, stream.read(6))
+                block = stream.read(self['block_len'] - 6)
+
+                if self['type'] == v23c.SOURCE_ECU:
+                    (self['module_nr'],
+                     self['module_address'],
+                     self['description'],
+                     self['ECU_identification'],
+                     self['reserved0']) = unpack(v23c.FMT_SOURCE_EXTRA_ECU, block)
+                elif self['type'] == v23c.SOURCE_VECTOR:
+                    (self['CAN_id'],
+                     self['CAN_ch_index'],
+                     self['message_name'],
+                     self['sender_name'],
+                     self['reserved0']) = unpack(
+                        v23c.FMT_SOURCE_EXTRA_VECTOR,
+                        block,
+                    )
+
             if self['id'] != b'CE':
                 message = 'Expected "CE" block but found "{}"'
                 raise MdfException(message.format(self['id']))
@@ -965,6 +1380,63 @@ class ChannelExtension(dict):
                 self['sender_name'] = kargs.get('sender_name', b'\0')
                 self['reserved0'] = kargs.get('reserved0', b'\0')
 
+        if self['type'] == v23c.SOURCE_ECU:
+            self.path = self['ECU_identification'].decode('latin-1').strip(' \t\n\r\0')
+            self.name = self['description'].decode('latin-1').strip(' \t\n\r\0')
+            self.comment = 'Module number={} @ address={}'.format(
+                self['module_nr'],
+                self['module_address'],
+            )
+        else:
+            self.path = self['sender_name'].decode('latin-1').strip(' \t\n\r\0')
+            self.name = self['message_name'].decode('latin-1').strip(' \t\n\r\0')
+            self.comment = 'Message ID={} on CAN bus {}'.format(
+                hex(self['CAN_id']),
+                self['CAN_ch_index'],
+            )
+
+    def metadata(self):
+        max_len = max(
+            len(key)
+            for key in self
+        )
+        template = '{{: <{}}}: {{}}'.format(max_len)
+
+        metadata = []
+        lines = """
+address: {}
+
+""".format(
+            hex(self.address),
+        ).split('\n')
+        for key, val in self.items():
+            if key.endswith('addr') or key.startswith('text_'):
+                lines.append(
+                    template.format(key, hex(val))
+                )
+            elif isinstance(val, float):
+                    lines.append(
+                        template.format(key, round(val, 6))
+                    )
+            else:
+                if (PYVERSION < 3 and isinstance(val, str)) or \
+                        (PYVERSION >= 3 and isinstance(val, bytes)):
+                    lines.append(
+                        template.format(key, val.strip(b'\0'))
+                    )
+                else:
+                    lines.append(
+                        template.format(key, val)
+                    )
+        for line in lines:
+            if not line:
+                metadata.append(line)
+            else:
+                for wrapped_line in wrap(line, width=120):
+                    metadata.append(wrapped_line)
+
+        return '\n'.join(metadata)
+
     def __bytes__(self):
         typ = self['type']
         if typ == v23c.SOURCE_ECU:
@@ -979,6 +1451,15 @@ class ChannelExtension(dict):
         else:
             result = pack(fmt, *[self[key] for key in keys])
         return result
+
+    def __str__(self):
+        return 'ChannelExtension (name: {}, path: {}, comment: {}, address: {}, fields: {})'.format(
+            self.name,
+            self.path,
+            self.comment,
+            hex(self.address),
+            super(ChannelExtension, self).__str__(),
+        )
 
 
 class ChannelGroup(dict):
@@ -1034,10 +1515,10 @@ class ChannelGroup(dict):
     b'CG'
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(ChannelGroup, self).__init__()
+        self.comment = ''
 
         try:
 
@@ -1057,9 +1538,16 @@ class ChannelGroup(dict):
              self['cycles_nr']) = unpack(v23c.FMT_CHANNEL_GROUP, block)
             if self['block_len'] == v23c.CG_POST_330_BLOCK_SIZE:
                 self['sample_reduction_addr'] = unpack('<I', stream.read(4))[0]
+                # sample reduction blocks are not yet used
+                self['sample_reduction_addr'] = 0
             if self['id'] != b'CG':
                 message = 'Expected "CG" block but found "{}"'
                 raise MdfException(message.format(self['id']))
+            if self['comment_addr']:
+                self.comment = get_text_v3(
+                    address=self['comment_addr'],
+                    stream=stream,
+                )
         except KeyError:
             self.address = 0
             self['id'] = b'CG'
@@ -1117,7 +1605,6 @@ class DataBlock(dict):
         binary file stream
 
     """
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(DataBlock, self).__init__()
@@ -1174,7 +1661,6 @@ class DataGroup(dict):
         block address inside mdf file
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(DataGroup, self).__init__()
@@ -1267,7 +1753,6 @@ class FileIdentificationBlock(dict):
         block address inside mdf file; should be 0 always
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(FileIdentificationBlock, self).__init__()
@@ -1356,12 +1841,12 @@ class HeaderBlock(dict):
         block address inside mdf file; should be 64 always
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(HeaderBlock, self).__init__()
 
         self.address = 64
+        self.program = None
         try:
 
             stream = kargs['stream']
@@ -1395,6 +1880,12 @@ class HeaderBlock(dict):
             if self['id'] != b'HD':
                 message = 'Expected "HD" block but found "{}"'
                 raise MdfException(message.format(self['id']))
+
+            if self['program_addr']:
+                self.program = ProgramBlock(
+                    address=self['program_addr'],
+                    stream=stream,
+                )
 
         except KeyError:
             version = kargs.get('version', '3.20')
@@ -1447,6 +1938,47 @@ class HeaderBlock(dict):
                     .encode('latin-1')
                 )
 
+    @property
+    def start_time(self):
+        """ get the measurement start timestamp
+
+        Returns
+        -------
+        timestamp : datetime
+            start timestamp
+
+        """
+
+        if self['block_len'] > v23c.HEADER_COMMON_SIZE:
+            timestamp = self['abs_time'] / 10 ** 9
+            try:
+                timestamp = datetime.fromtimestamp(timestamp)
+            except OSError:
+                timestamp = datetime.now()
+
+        else:
+            timestamp = '{} {}'.format(
+                self['date'].decode('ascii'),
+                self['time'].decode('ascii'),
+            )
+
+            timestamp = datetime.strptime(
+                timestamp,
+                '%d:%m:%Y %H:%M:%S',
+            )
+
+        return timestamp
+
+    @start_time.setter
+    def start_time(self, timestamp):
+        self['date'] = timestamp.strftime('%d:%m:%Y').encode('ascii')
+        self['time'] = timestamp.strftime('%H:%M:%S').encode('ascii')
+        if self['block_len'] > v23c.HEADER_COMMON_SIZE:
+            timestamp = timestamp - datetime(1970, 1, 1)
+            timestamp = int(timestamp.total_seconds() * 10**9)
+            self['abs_time'] = timestamp
+            self['tz_offset'] = 0
+
     def __bytes__(self):
         fmt = v23c.HEADER_COMMON_FMT
         keys = v23c.HEADER_COMMON_KEYS
@@ -1489,7 +2021,6 @@ class ProgramBlock(dict):
         block address inside mdf file
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(ProgramBlock, self).__init__()
@@ -1551,7 +2082,6 @@ class SampleReduction(dict):
         block address inside mdf file
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(SampleReduction, self).__init__()
@@ -1626,7 +2156,6 @@ class TextBlock(dict):
     b'VehicleSpeed'
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(TextBlock, self).__init__()
@@ -1709,7 +2238,6 @@ class TriggerBlock(dict):
         block address inside mdf file
 
     '''
-    __slots__ = ['address', ]
 
     def __init__(self, **kargs):
         super(TriggerBlock, self).__init__()
@@ -1745,12 +2273,16 @@ class TriggerBlock(dict):
                 raise MdfException(message.format(self['id']))
 
         except KeyError:
-            self['id'] = b'TR'
-            self['block_len'] = 10 + kargs['trigger_events_nr'] * 8 * 3
-            self['text_addr'] = 0
-            self['trigger_events_nr'] = kargs['trigger_events_nr']
+            self.address = 0
+            nr = 0
+            while 'trigger_{}_time'.format(nr) in kargs:
+                nr += 1
 
-            nr = self['trigger_events_nr']
+            self['id'] = b'TR'
+            self['block_len'] = 10 + nr * 8 * 3
+            self['text_addr'] = 0
+            self['trigger_events_nr'] = nr
+
             for i in range(nr):
                 key = 'trigger_{}_time'.format(i)
                 self[key] = kargs[key]
