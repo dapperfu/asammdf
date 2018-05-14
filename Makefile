@@ -5,8 +5,8 @@ null:
 .PHONY: update
 update:
 	git fetch --all --verbose
-	git rebase upstream/development
-
+	git rebase upstream/master
+	git push 
 
 .PHONY: upstream
 upstream:
