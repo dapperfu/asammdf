@@ -39,10 +39,11 @@ The main goals for this library are:
 * append new channels
 * read unsorted MDF v3 and v4 files
 * read CAN bus logging files
+* extract CAN signals from anonymous CAN bus logging measurements
 * filter a subset of channels from original mdf file
 * cut measurement to specified time interval
 * convert to different mdf version
-* export to pandas, Excel, HDF5, Matlab (v4, v5 and v7.3),CSV and parquet
+* export to HDF5, Matlab (v4, v5 and v7.3), CSV and parquet
 * merge multiple files sharing the same internal structure
 * read and save mdf version 4.10 files containing zipped data blocks
 * space optimizations for saved files (no duplicated blocks)
@@ -58,7 +59,7 @@ The main goals for this library are:
         * 2 - look-up
 
 * add and extract attachments for mdf version 4
-* handle large files (for example merging two fileas, each with 14000 channels and 5GB size, on a RaspberryPi) using *memory* = *minimum* argument
+* handle large files (for example merging two fileas, each with 14000 channels and 5GB size, on a RaspberryPi)
 * extract channel data, master channel and extra channel information as *Signal* objects for unified operations with v3 and v4 files
 * time domain operation using the *Signal* class
 
@@ -79,7 +80,8 @@ The main goals for this library are:
     * functionality related to sample reduction block: the samples reduction blocks are simply ignored
     * handling of channel hierarchy: channel hierarchy is ignored
     * full handling of bus logging measurements: currently only CAN bus logging is implemented with the
-      ability to *get* signals defined in the attached CAN database (.arxml or .dbc)
+      ability to *get* signals defined in the attached CAN database (.arxml or .dbc). Signals can also
+      be extracted from an anonymous CAN logging measurement by providing a CAN database (.dbc or .arxml)
     * handling of unfinished measurements (mdf 4): warnings are logged based on the unfinished status flags
       but no further steps are taken to sanitize the measurement
     * full support for remaining mdf 4 channel arrays types
@@ -123,25 +125,6 @@ Please have a look over the [contributing guidelines](CONTRIBUTING.md)
 If you enjoy this library please consider making a donation to the
 [numpy project](https://www.flipcause.com/secure/cause_pdetails/MzUwMQ==).
 
-To start development on your own GitHub:
-
-- [Forking a repository allows you to freely experiment with changes without affecting the original project.](https://help.github.com/en/articles/fork-a-repo)
-- Clone your repository and make changes.
-- [Create a pull request to propose and collaborate on changes to a repository.](https://help.github.com/en/articles/creating-a-pull-request)
-- [Sync a fork of a repository to keep it up-to-date with the upstream repository.](https://help.github.com/en/articles/syncing-a-fork)
-
-
-Programmatically:
-
-```
-export GITHUB_USER=example
-git clone git@github.com:${GITHUB_USER}/asammdf.git
-cd asammdf
-git remote add upstream https://github.com/danielhrisca/asammdf.git
-git fetch upstream
-git rebase upstream/master
-```
-
 ## Contributors
 Thanks to all who contributed with commits to *asammdf*:
 * Julien Grave [JulienGrv](https://github.com/JulienGrv)
@@ -169,6 +152,25 @@ pip install asammdf
 conda install -c conda-forge asammdf
 ```
 
+To start development on your own GitHub:
+
+- [Forking a repository allows you to freely experiment with changes without affecting the original project.](https://help.github.com/en/articles/fork-a-repo)
+- Clone your repository and make changes.
+- [Create a pull request to propose and collaborate on changes to a repository.](https://help.github.com/en/articles/creating-a-pull-request)
+- [Sync a fork of a repository to keep it up-to-date with the upstream repository.](https://help.github.com/en/articles/syncing-a-fork)
+
+
+Programmatically:
+
+```
+export GITHUB_USER=example
+git clone git@github.com:${GITHUB_USER}/asammdf.git
+cd asammdf
+git remote add upstream https://github.com/danielhrisca/asammdf.git
+git fetch upstream
+git rebase upstream/master
+```
+
 # Dependencies
 asammdf uses the following libraries
 
@@ -177,20 +179,21 @@ asammdf uses the following libraries
 * wheel : for installation in virtual environments
 * pandas : for DataFrame export
 * canmatrix : to handle CAN bus logging measurements
+* natsort
+* cChardet : to detect non-standard unicode encodings
+* lxml : for canmatrix arxml support
 
 optional dependencies needed for exports
 
 * h5py : for HDF5 export
-* xlsxwriter : for Excel export
 * scipy : for Matlab v4 and v5 .mat export
 * hdf5storage : for Matlab v7.3 .mat export
 * fastparquet : for parquet export
 
 other optional dependencies
 
-* cChardet : to detect non-standard unicode encodings
 * PyQt5 : for GUI tool
-* pyqtgraph : for GUI tool and Signal plotting
+* pyqtgraph : for GUI tool and Signal plotting (preferably the latest develop branch code)
 * matplotlib : as fallback for Signal plotting
 
 # Benchmarks
