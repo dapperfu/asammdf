@@ -431,7 +431,7 @@ class MDF4(object):
 
         return flags
 
-    def _read(self, mapped=False):
+    def _read(self, mapped: bool=False):
 
         stream = self._file
         self._mapped = mapped
