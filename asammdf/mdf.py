@@ -97,7 +97,7 @@ class MDF(object):
 
     _terminate = False
 
-    def __init__(self, openfile: fsspec.core.OpenFile = None, version="4.10", **kwargs):
+    def __init__(self, name: fsspec.core.OpenFile = None, version="4.10", **kwargs):
         if name:
             if is_file_like(name):
                 file_stream = name
