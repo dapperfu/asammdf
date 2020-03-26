@@ -102,9 +102,7 @@ class MDF(object):
 
     _terminate = False
 
-    def __init__(
-        self, name: Union[fsspec.core.OpenFile, str] = None, version="4.10", **kwargs
-    ):
+    def __init__(self, name: fsspec.core.OpenFile = None, version="4.10", **kwargs):
         if name:
             # If input name is a string.
             if isinstance(name, str):
