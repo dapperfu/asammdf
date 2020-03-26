@@ -2515,7 +2515,11 @@ class FileIdentificationBlock:
             self.program_identification = "amdf{}".format(
                 __version__.replace(".", "")
             ).encode("latin-1")
-            self.byte_order = v23c.BYTE_ORDER_INTEL if sys.byteorder == 'little' else v23c.BYTE_ORDER_MOTOROLA
+            self.byte_order = (
+                v23c.BYTE_ORDER_INTEL
+                if sys.byteorder == "little"
+                else v23c.BYTE_ORDER_MOTOROLA
+            )
             self.float_format = 0
             self.mdf_version = int(version.replace(".", ""))
             self.code_page = 0

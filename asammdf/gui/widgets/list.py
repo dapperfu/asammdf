@@ -275,7 +275,10 @@ class ListWidget(QtWidgets.QListWidget):
                         widget.set_precision(precision)
                         widget.update()
 
-        elif action.text() in ("Relative time base shift", "Set time base start offset"):
+        elif action.text() in (
+            "Relative time base shift",
+            "Set time base start offset",
+        ):
             selected_items = self.selectedItems()
             if selected_items:
 
@@ -298,7 +301,7 @@ class ListWidget(QtWidgets.QListWidget):
                         if item in selected_items:
 
                             uuids.append(widget.uuid)
-                    self.set_time_offset.emit([absolute, offset, ] + uuids)
+                    self.set_time_offset.emit([absolute, offset,] + uuids)
 
         elif action.text() == "Delete (Del)":
             event = QtGui.QKeyEvent(

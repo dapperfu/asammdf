@@ -45,7 +45,6 @@ if not hasattr(pg.InfiniteLine, "addMarker"):
 
 
 class PlotSignal(Signal):
-
     def __init__(self, signal, index=0):
         super().__init__(
             signal.samples,
@@ -116,7 +115,7 @@ class PlotSignal(Signal):
             "fmt": "",
         }
 
-        if hasattr(signal, 'color'):
+        if hasattr(signal, "color"):
             color = signal.color or COLORS[index % 10]
         else:
             color = COLORS[index % 10]
@@ -124,7 +123,7 @@ class PlotSignal(Signal):
 
         if len(self.phys_samples):
 
-            if self.phys_samples.dtype.kind in 'SUV':
+            if self.phys_samples.dtype.kind in "SUV":
                 self.is_string = True
                 self._min = ""
                 self._max = ""
@@ -144,7 +143,7 @@ class PlotSignal(Signal):
                     self._avg = "n.a."
                     self._rms = "n.a."
 
-            if self.raw_samples.dtype.kind in 'SUV':
+            if self.raw_samples.dtype.kind in "SUV":
                 self._min_raw = ""
                 self._max_raw = ""
                 self._avg_raw = ""
@@ -167,7 +166,7 @@ class PlotSignal(Signal):
 
         else:
             self.empty = True
-            if self.phys_samples.dtype.kind in 'SUV':
+            if self.phys_samples.dtype.kind in "SUV":
                 self.is_string = True
                 self._min = ""
                 self._max = ""
@@ -234,7 +233,7 @@ class PlotSignal(Signal):
                 self.plot_samples = self.phys_samples
                 self.plot_timestamps = self.timestamps
 
-            if self.plot_samples.dtype.kind in 'SUV':
+            if self.plot_samples.dtype.kind in "SUV":
                 self.is_string = True
             else:
                 self.is_string = False
@@ -266,11 +265,11 @@ class PlotSignal(Signal):
 
                     if kind in "SUV":
                         fmt = "{}"
-                    elif kind == 'f':
+                    elif kind == "f":
                         fmt = f"{{:.{self.precision}f}}"
                     else:
                         if format == "hex":
-                           fmt = "0x{:X}"
+                            fmt = "0x{:X}"
                         elif format == "bin":
                             fmt = "0b{:b}"
                         elif format == "phys":
@@ -299,18 +298,18 @@ class PlotSignal(Signal):
                 stats["visible_delta"] = ""
             else:
                 if isinstance(sig.min, str):
-                    kind = 'S'
+                    kind = "S"
                     fmt = "{}"
                 else:
                     kind = sig.min.dtype.kind
                     format = sig.format
                     if kind in "SUV":
                         fmt = "{}"
-                    elif kind == 'f':
+                    elif kind == "f":
                         fmt = f"{{:.{self.precision}f}}"
                     else:
                         if format == "hex":
-                           fmt = "0x{:X}"
+                            fmt = "0x{:X}"
                         elif format == "bin":
                             fmt = "0b{:b}"
                         elif format == "phys":
@@ -334,11 +333,11 @@ class PlotSignal(Signal):
 
                     if kind in "SUV":
                         fmt = "{}"
-                    elif kind == 'f':
+                    elif kind == "f":
                         fmt = f"{{:.{self.precision}f}}"
                     else:
                         if format == "hex":
-                           fmt = "0x{:X}"
+                            fmt = "0x{:X}"
                         elif format == "bin":
                             fmt = "0b{:b}"
                         elif format == "phys":
@@ -355,7 +354,7 @@ class PlotSignal(Signal):
                 if region:
                     start, stop = region
 
-#                     if sig._stats["range"] != (start, stop) or sig._stats["fmt"] != fmt:
+                    #                     if sig._stats["range"] != (start, stop) or sig._stats["fmt"] != fmt:
                     new_stats = {}
                     new_stats["selected_start"] = start
                     new_stats["selected_stop"] = stop
@@ -376,26 +375,20 @@ class PlotSignal(Signal):
 
                         if kind in "SUV":
                             fmt = "{}"
-                        elif kind == 'f':
+                        elif kind == "f":
                             fmt = f"{{:.{self.precision}f}}"
                         else:
                             if format == "hex":
-                               fmt = "0x{:X}"
+                                fmt = "0x{:X}"
                             elif format == "bin":
                                 fmt = "0b{:b}"
                             elif format == "phys":
                                 fmt = "{}"
 
-                        new_stats["selected_min"] = fmt.format(
-                            np.nanmin(samples)
-                        )
-                        new_stats["selected_max"] = fmt.format(
-                            np.nanmax(samples)
-                        )
+                        new_stats["selected_min"] = fmt.format(np.nanmin(samples))
+                        new_stats["selected_max"] = fmt.format(np.nanmax(samples))
                         new_stats["selected_average"] = np.mean(samples)
-                        new_stats["selected_rms"] = np.sqrt(
-                            np.mean(np.square(samples))
-                        )
+                        new_stats["selected_rms"] = np.sqrt(np.mean(np.square(samples)))
                         if kind in "ui":
                             new_stats["selected_delta"] = fmt.format(
                                 int(samples[-1]) - int(samples[0])
@@ -429,7 +422,7 @@ class PlotSignal(Signal):
 
                 start, stop = view_region
 
-#                if sig._stats["visible"] != (start, stop) or sig._stats["fmt"] != fmt:
+                #                if sig._stats["visible"] != (start, stop) or sig._stats["fmt"] != fmt:
                 new_stats = {}
                 new_stats["visible_start"] = start
                 new_stats["visible_stop"] = stop
@@ -450,11 +443,11 @@ class PlotSignal(Signal):
 
                     if kind in "SUV":
                         fmt = "{}"
-                    elif kind == 'f':
+                    elif kind == "f":
                         fmt = f"{{:.{self.precision}f}}"
                     else:
                         if format == "hex":
-                           fmt = "0x{:X}"
+                            fmt = "0x{:X}"
                         elif format == "bin":
                             fmt = "0b{:b}"
                         elif format == "phys":
@@ -463,9 +456,7 @@ class PlotSignal(Signal):
                     new_stats["visible_min"] = fmt.format(np.nanmin(samples))
                     new_stats["visible_max"] = fmt.format(np.nanmax(samples))
                     new_stats["visible_average"] = np.mean(samples)
-                    new_stats["visible_rms"] = np.sqrt(
-                        np.mean(np.square(samples))
-                    )
+                    new_stats["visible_rms"] = np.sqrt(np.mean(np.square(samples)))
                     if kind in "ui":
                         new_stats["visible_delta"] = int(cut.samples[-1]) - int(
                             cut.samples[0]
@@ -543,7 +534,7 @@ class PlotSignal(Signal):
             stats["visible_rms"] = "n.a."
             stats["visible_delta"] = "n.a."
 
-#        sig._stats["fmt"] = fmt
+        #        sig._stats["fmt"] = fmt
         return stats
 
     def trim(self, start=None, stop=None, width=1900):
@@ -641,7 +632,7 @@ class PlotSignal(Signal):
         if self.mode == "raw":
             values = cut.raw_samples
         else:
-            if self.conversion and hasattr(self.conversion, 'text_0'):
+            if self.conversion and hasattr(self.conversion, "text_0"):
                 values = self.conversion.convert(cut.samples)
             else:
                 values = cut.phys_samples
@@ -654,9 +645,9 @@ class PlotSignal(Signal):
             kind = values.dtype.kind
             if kind == "S":
                 try:
-                    value = values[0].decode("utf-8").strip(' \r\n\t\v\0')
+                    value = values[0].decode("utf-8").strip(" \r\n\t\v\0")
                 except:
-                    value = values[0].decode("latin-1").strip(' \r\n\t\v\0')
+                    value = values[0].decode("latin-1").strip(" \r\n\t\v\0")
 
                 value = value or "<empty string>"
             else:
@@ -947,13 +938,13 @@ class Plot(QtWidgets.QWidget):
             item.set_prefix("Δ = ")
             item.set_fmt(signal.format)
 
-            if start_v != 'n.a.':
+            if start_v != "n.a.":
                 if kind in "ui":
                     delta = np.int64(stop_v) - np.int64(start_v)
                     item.kind = kind
                     item.set_value(delta)
                     item.set_fmt(fmt)
-                elif kind == 'f':
+                elif kind == "f":
                     delta = stop_v - start_v
                     item.kind = kind
                     item.set_value(delta)
@@ -1029,7 +1020,10 @@ class Plot(QtWidgets.QWidget):
                     )
                 )
 
-        elif key in (QtCore.Qt.Key_B, QtCore.Qt.Key_H, QtCore.Qt.Key_P) and modifiers == QtCore.Qt.ControlModifier:
+        elif (
+            key in (QtCore.Qt.Key_B, QtCore.Qt.Key_H, QtCore.Qt.Key_P)
+            and modifiers == QtCore.Qt.ControlModifier
+        ):
             selected_items = self.channel_selection.selectedItems()
             if not selected_items:
                 signals = [(sig, i) for i, sig in enumerate(self.plot.signals)]
@@ -1059,7 +1053,10 @@ class Plot(QtWidgets.QWidget):
             if self.plot.cursor1:
                 self.plot.cursor_moved.emit()
 
-        elif key in (QtCore.Qt.Key_R, QtCore.Qt.Key_S) and modifiers == QtCore.Qt.AltModifier:
+        elif (
+            key in (QtCore.Qt.Key_R, QtCore.Qt.Key_S)
+            and modifiers == QtCore.Qt.AltModifier
+        ):
             selected_items = self.channel_selection.selectedItems()
             if not selected_items:
                 signals = [(sig, i) for i, sig in enumerate(self.plot.signals)]
@@ -1110,7 +1107,6 @@ class Plot(QtWidgets.QWidget):
                         top = buttom + delta
                     else:
                         buttom, top = max_ - 1, max_ + 1
-
 
                     view.setYRange(buttom, top, padding=0, update=True)
 
@@ -1201,11 +1197,11 @@ class Plot(QtWidgets.QWidget):
         for channel in channels:
             if len(channel):
                 samples = channel.samples
-                if samples.dtype.kind not in 'SUV' and np.all(np.isnan(samples)):
+                if samples.dtype.kind not in "SUV" and np.all(np.isnan(samples)):
                     invalid.append(channel.name)
                 elif channel.conversion:
                     samples = channel.physical().samples
-                    if samples.dtype.kind not in 'SUV' and np.all(np.isnan(samples)):
+                    if samples.dtype.kind not in "SUV" and np.all(np.isnan(samples)):
                         invalid.append(channel.name)
                     else:
                         valid.append(channel)
@@ -1239,9 +1235,7 @@ class Plot(QtWidgets.QWidget):
                 kind = sig.conversion.convert(sig.samples[:1]).dtype.kind
             else:
                 kind = sig.samples.dtype.kind
-            it = ChannelDisplay(
-                sig.uuid, sig.unit, kind, 3, tooltip, self
-            )
+            it = ChannelDisplay(sig.uuid, sig.unit, kind, 3, tooltip, self)
             it.setAttribute(QtCore.Qt.WA_StyledBackground)
 
             it.set_name(sig.name)
@@ -1461,16 +1455,16 @@ class _Plot(pg.PlotWidget):
                 t = sig.plot_timestamps
 
                 if sig.mode == "raw":
-                    style=QtCore.Qt.DashLine
+                    style = QtCore.Qt.DashLine
                 else:
-                    style=QtCore.Qt.SolidLine
+                    style = QtCore.Qt.SolidLine
 
                 if not force:
                     try:
                         curve = self.curvetype(
                             t,
                             sig.plot_samples,
-                            pen={'color': color, 'style': style},
+                            pen={"color": color, "style": style},
                             symbolBrush=color,
                             symbolPen=color,
                             symbol="o",
@@ -1500,7 +1494,7 @@ class _Plot(pg.PlotWidget):
                     if len(t):
 
                         if self.with_dots:
-                            curve.setPen({'color': color, 'style': style})
+                            curve.setPen({"color": color, "style": style})
                             curve.setData(x=t, y=sig.plot_samples)
                             curve.update()
                         else:
@@ -1517,8 +1511,8 @@ class _Plot(pg.PlotWidget):
                             curve._mouseShape = None
                             curve.prepareGeometryChange()
                             curve.informViewBoundsChanged()
-                            if curve.opts['pen'].style() != style:
-                                curve.opts['pen'].setStyle(style)
+                            if curve.opts["pen"].style() != style:
+                                curve.opts["pen"].setStyle(style)
                             curve.update()
                             curve.sigPlotChanged.emit(curve)
 
@@ -1771,11 +1765,7 @@ class _Plot(pg.PlotWidget):
                 )
 
                 if file_name:
-                    signals = [
-                        signal
-                        for signal in self.signals
-                        if signal.enable
-                    ]
+                    signals = [signal for signal in self.signals if signal.enable]
                     if signals:
                         with MDF() as mdf:
                             groups = {}
@@ -1787,9 +1777,9 @@ class _Plot(pg.PlotWidget):
                             for signals in groups.values():
                                 sigs = []
                                 for signal in signals:
-                                    if ':' in signal.name:
+                                    if ":" in signal.name:
                                         sig = signal.copy()
-                                        sig.name = sig.name.split(':')[-1].strip()
+                                        sig.name = sig.name.split(":")[-1].strip()
                                         sigs.append(sig)
                                     else:
                                         sigs.append(signal)
@@ -1816,7 +1806,9 @@ class _Plot(pg.PlotWidget):
                 )
 
                 if any(
-                    sig.min != "n.a." and curve.isVisible() and sig.uuid in self.common_axis_items
+                    sig.min != "n.a."
+                    and curve.isVisible()
+                    and sig.uuid in self.common_axis_items
                     for (sig, curve) in zip(self.signals, self.curves)
                 ):
                     count += 1
@@ -2091,8 +2083,7 @@ class _Plot(pg.PlotWidget):
                     sig.computation = {}
 
         channels = [
-            PlotSignal(sig, i)
-            for i, sig in enumerate(channels, len(self.signals))
+            PlotSignal(sig, i) for i, sig in enumerate(channels, len(self.signals))
         ]
 
         for i, sig in enumerate(channels):
@@ -2178,7 +2169,11 @@ class _Plot(pg.PlotWidget):
 
     def _compute_all_timebase(self):
         if self._timebase_db:
-            timebases = [sig.timestamps for sig in self.signals if id(sig.timestamps) in self._timebase_db]
+            timebases = [
+                sig.timestamps
+                for sig in self.signals
+                if id(sig.timestamps) in self._timebase_db
+            ]
             self.all_timebase = self.timebase = reduce(np.union1d, timebases)
         else:
             self.all_timebase = self.timebase = []
@@ -2263,11 +2258,7 @@ class _Plot(pg.PlotWidget):
 
     def set_time_offset(self, info):
         absolute, offset, *uuids = info
-        signals = [
-            sig
-            for sig in self.signals
-            if sig.uuid in uuids
-        ]
+        signals = [sig for sig in self.signals if sig.uuid in uuids]
 
         if absolute:
             for sig in signals:

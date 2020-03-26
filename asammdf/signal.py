@@ -125,13 +125,15 @@ class Signal(object):
             self.stream_sync = stream_sync
 
             if invalidation_bits is not None:
-                if not isinstance(
-                    invalidation_bits, np.ndarray
-                ):
+                if not isinstance(invalidation_bits, np.ndarray):
                     invalidation_bits = np.array(invalidation_bits)
                 if invalidation_bits.shape[0] != samples.shape[0]:
-                    message = "{} samples and invalidation bits length mismatch ({} vs {})"
-                    message = message.format(name, samples.shape[0], invalidation_bits.shape[0])
+                    message = (
+                        "{} samples and invalidation bits length mismatch ({} vs {})"
+                    )
+                    message = message.format(
+                        name, samples.shape[0], invalidation_bits.shape[0]
+                    )
                     logger.exception(message)
                     raise MdfException(message)
             self.invalidation_bits = invalidation_bits
@@ -1104,8 +1106,8 @@ class Signal(object):
             samples = self.samples.copy()
         else:
             samples = self.conversion.convert(self.samples)
-            if samples.dtype.kind == 'S':
-                encoding = 'utf-8' if self.conversion.id == b'##CC' else 'latin-1'
+            if samples.dtype.kind == "S":
+                encoding = "utf-8" if self.conversion.id == b"##CC" else "latin-1"
             else:
                 encoding = None
 

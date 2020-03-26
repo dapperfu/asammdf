@@ -127,10 +127,7 @@ def load_dsp(file):
     numeric = {
         "type": "Numeric",
         "title": "Numeric",
-        "configuration": {
-            "channels": all_channels,
-            "format": "phys",
-        }
+        "configuration": {"channels": all_channels, "format": "phys",},
     }
 
     windows.append(numeric)
@@ -141,7 +138,7 @@ def load_dsp(file):
         "configuration": {
             "channels": [
                 {
-                    "color": COLORS[i%len(COLORS)],
+                    "color": COLORS[i % len(COLORS)],
                     "common_axis": False,
                     "computed": False,
                     "enabled": True,
@@ -154,7 +151,7 @@ def load_dsp(file):
                 }
                 for i, name in enumerate(all_channels)
             ]
-        }
+        },
     }
 
     windows.append(plot)

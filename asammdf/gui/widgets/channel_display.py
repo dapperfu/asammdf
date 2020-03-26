@@ -84,7 +84,7 @@ class ChannelDisplay(Ui_ChannelDiplay, QtWidgets.QWidget):
     def set_fmt(self, fmt):
         if self.kind in "SUV":
             self.fmt = "{}"
-        elif self.kind == 'f':
+        elif self.kind == "f":
             self.fmt = f"{{:.{self.precision}f}}"
         else:
             if fmt == "hex":

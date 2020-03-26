@@ -26,7 +26,9 @@ class Ui_MultiSearchDialog(object):
         self.cancel_btn = QtWidgets.QPushButton(MultiSearchDialog)
         self.cancel_btn.setObjectName("cancel_btn")
         self.horizontalLayout.addWidget(self.cancel_btn)
-        spacerItem = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+        spacerItem = QtWidgets.QSpacerItem(
+            40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
+        )
         self.horizontalLayout.addItem(spacerItem)
         self.apply_btn = QtWidgets.QPushButton(MultiSearchDialog)
         self.apply_btn.setObjectName("apply_btn")
@@ -38,7 +40,9 @@ class Ui_MultiSearchDialog(object):
         self.match_kind.addItem("")
         self.match_kind.addItem("")
         self.grid_layout.addWidget(self.match_kind, 0, 0, 1, 1)
-        spacerItem1 = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
+        spacerItem1 = QtWidgets.QSpacerItem(
+            20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding
+        )
         self.grid_layout.addItem(spacerItem1, 6, 1, 1, 1)
         self.selection = MinimalListWidget(MultiSearchDialog)
         self.selection.setMinimumSize(QtCore.QSize(500, 0))
@@ -60,7 +64,9 @@ class Ui_MultiSearchDialog(object):
         self.grid_layout.addWidget(self.search_box, 1, 0, 1, 1)
         self.show_measurement_list_btn = QtWidgets.QPushButton(MultiSearchDialog)
         icon1 = QtGui.QIcon()
-        icon1.addPixmap(QtGui.QPixmap(":/info.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon1.addPixmap(
+            QtGui.QPixmap(":/info.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off
+        )
         self.show_measurement_list_btn.setIcon(icon1)
         self.show_measurement_list_btn.setObjectName("show_measurement_list_btn")
         self.grid_layout.addWidget(self.show_measurement_list_btn, 0, 2, 1, 2)
@@ -86,7 +92,9 @@ class Ui_MultiSearchDialog(object):
         self.match_kind.setItemText(0, _translate("MultiSearchDialog", "Wildcard"))
         self.match_kind.setItemText(1, _translate("MultiSearchDialog", "Regex"))
         self.label.setText(_translate("MultiSearchDialog", "Final selection"))
-        self.show_measurement_list_btn.setText(_translate("MultiSearchDialog", "Show measurement list"))
+        self.show_measurement_list_btn.setText(
+            _translate("MultiSearchDialog", "Show measurement list")
+        )
 
 
 from asammdf.gui.widgets.list import MinimalListWidget

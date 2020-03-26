@@ -55,12 +55,17 @@ from .blocks.v4_blocks import EventBlock
 from .blocks import v4_constants as v4c
 from .blocks import v2_v3_constants as v23c
 
+from urllib.parse import urlparse, parse_qs
 
 logger = logging.getLogger("asammdf")
 LOCAL_TIMEZONE = datetime.now(timezone.utc).astimezone().tzinfo
 
+import fsspec
+from typing import Union
 
 __all__ = ["MDF", "SUPPORTED_VERSIONS"]
+
+import os
 
 
 class MDF(object):
@@ -97,16 +102,51 @@ class MDF(object):
 
     _terminate = False
 
-    def __init__(self, name: fsspec.core.OpenFile = None, version="4.10", **kwargs):
+    def __init__(
+        self, name: Union[fsspec.core.OpenFile, str] = None, version="4.10", **kwargs
+    ):
         if name:
-            if is_file_like(name):
-                file_stream = name
-            else:
-                name = Path(name)
-                if name.is_file():
-                    file_stream = open(name, "rb")
+            # If input name is a string.
+            if isinstance(name, str):
+                # Parse the string as a url.
+                file_url = urlparse(name)
+                qs = parse_qs(file_url.query)["endpoint_url"]
+                # If there is no scheme specified, treat it as a local file.
+                if file_url.scheme == "":
+                    file_stream = fsspec.open(name)
+                elif file_url.scheme == "s3":
+                    storage_options = dict()
+                    # TODO: See what dask, boto, pandas all settle on for the proper format.
+                    # This is a stop gap and should be expected to change.
+                    # https://github.com/boto/boto3/issues/1375
+                    # https://github.com/dask/s3fs/issues/273
+
+                    s3_endpoint = None
+                    if "S3_ENDPOINT" in os.environ:
+                        # Method 1: env variable
+                        # Used by Pandas and Tensorflow:
+                        # https://github.com/pandas-dev/pandas/pull/29050
+                        s3_endpoint = os.environ["S3_ENDPOINT"]
+                    elif "endpoint_url" in qs:
+                        # Method2: query string
+                        # Suggested in dask issue thread.
+                        s3_endpoint = qs["endpoint_url"]
+
+                    if s3_endpoint is not None:
+                        storage_options["client_kwargs"] = {
+                            "endpoint_url": "http://127.0.0.1:9000"
+                        }
+
+                    if len(file_url.username) > 0:
+                        storage_options["key"] = file_url.username
+                    if len(file_url.password) > 0:
+                        storage_options["secret"] = file_url.password
+                    fs = s3fs.S3FileSystem(**storage_options)
+                    file_stream = fs.open()
                 else:
-                    raise MdfException(f'File "{name}" does not exist')
+                    raise Exception(f"Unsupported URL type.")
+            else:
+                file_stream = name
             file_stream.seek(0)
             magic_header = file_stream.read(8)
             if magic_header != b"MDF     " and magic_header != b"UnFinMF ":

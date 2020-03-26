@@ -295,6 +295,7 @@ def open_mdf4(output, fmt):
         MDF(r"test.mf4")
     output.send([timer.output, timer.error])
 
+
 def open_mdf4_column(output, fmt):
 
     with Timer("Open file", f"asammdf {asammdf_version} column mdfv4", fmt) as timer:
@@ -316,6 +317,7 @@ def save_mdf4(output, fmt):
     with Timer("Save file", f"asammdf {asammdf_version} mdfv4", fmt) as timer:
         x.save(r"x.mf4", overwrite=True)
     output.send([timer.output, timer.error])
+
 
 def save_mdf4_column(output, fmt):
 
@@ -355,10 +357,13 @@ def get_all_mdf4(output, fmt):
                 counter += 1
     output.send([timer.output, timer.error])
 
+
 def get_all_mdf4_column(output, fmt):
 
     x = MDF(r"test_column.mf4")
-    with Timer("Get all channels", f"asammdf {asammdf_version} column mdfv4", fmt) as timer:
+    with Timer(
+        "Get all channels", f"asammdf {asammdf_version} column mdfv4", fmt
+    ) as timer:
         t = perf_counter()
         counter = 0
         to_break = False
@@ -387,7 +392,9 @@ def convert_v3_v4(output, fmt):
 def convert_v4_v410(output, fmt):
 
     with MDF(r"test.mf4") as x:
-        with Timer("Convert file", f"asammdf {asammdf_version} v4 to v410", fmt) as timer:
+        with Timer(
+            "Convert file", f"asammdf {asammdf_version} v4 to v410", fmt
+        ) as timer:
             y = x.convert("4.10")
             y.close()
     output.send([timer.output, timer.error])
@@ -396,11 +403,12 @@ def convert_v4_v410(output, fmt):
 def convert_v4_v420(output, fmt):
 
     with MDF(r"test.mf4") as x:
-        with Timer("Convert file", f"asammdf {asammdf_version} v4 to v420", fmt) as timer:
+        with Timer(
+            "Convert file", f"asammdf {asammdf_version} v4 to v420", fmt
+        ) as timer:
             y = x.convert("4.20")
             y.close()
     output.send([timer.output, timer.error])
-
 
 
 def merge_v3(output, fmt):
@@ -751,7 +759,7 @@ def merge_reader_v4_nodata(output, fmt):
 def filter_asam(output, fmt):
     with Timer("Filter file", f"asammdf {asammdf_version} mdfv4", fmt) as timer:
         x = MDF(r"test.mf4").filter(
-            [(None, i, int(f'{j}5')) for i in range(10, 20) for j in range(1, 20)]
+            [(None, i, int(f"{j}5")) for i in range(10, 20) for j in range(1, 20)]
         )
         t = perf_counter()
         counter = 0
@@ -963,7 +971,7 @@ def main(text_output, fmt):
         open_reader3_nodata,
         open_reader3_compression,
         open_mdf4,
-#        open_mdf4_column,
+        #        open_mdf4_column,
         open_reader4,
         open_reader4_nodata,
         open_reader4_compression,
@@ -986,7 +994,7 @@ def main(text_output, fmt):
         save_reader3_nodata,
         save_reader3_compression,
         save_mdf4,
-#        save_mdf4_column,
+        #        save_mdf4_column,
         save_reader4,
         save_reader4_nodata,
         save_reader4_compression,
@@ -1009,11 +1017,10 @@ def main(text_output, fmt):
         get_all_reader3_nodata,
         get_all_reader3_compression,
         get_all_mdf4,
-#        get_all_mdf4_column,
+        #        get_all_mdf4_column,
         get_all_reader4,
         get_all_reader4_nodata,
         get_all_reader4_compression,
-
     )
 
     if tests and GET:
@@ -1086,9 +1093,9 @@ def main(text_output, fmt):
 
     tests = (
         cut_asam,
-#        cut_reader4,
-#        cut_reader4_compression,
-#        cut_reader4_nodata,
+        #        cut_reader4,
+        #        cut_reader4_compression,
+        #        cut_reader4_nodata,
     )
 
     if tests and CUT:

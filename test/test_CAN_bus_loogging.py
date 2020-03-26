@@ -31,7 +31,7 @@ class TestCANBusLogging(unittest.TestCase):
         Path("test.zip").unlink()
 
     def test_obd_extract(self):
-        print('OBD extract')
+        print("OBD extract")
 
         temp_dir = Path(TestCANBusLogging.tempdir_obd.name)
 
@@ -41,7 +41,7 @@ class TestCANBusLogging(unittest.TestCase):
         mdf = [
             input_file
             for input_file in temp_dir.iterdir()
-            if input_file.suffix == '.mf4'
+            if input_file.suffix == ".mf4"
         ][0]
 
         mdf = MDF(mdf)
@@ -49,13 +49,13 @@ class TestCANBusLogging(unittest.TestCase):
         dbc = [
             input_file
             for input_file in temp_dir.iterdir()
-            if input_file.suffix == '.dbc'
+            if input_file.suffix == ".dbc"
         ][0]
 
         signals = [
             input_file
             for input_file in temp_dir.iterdir()
-            if input_file.suffix == '.npy'
+            if input_file.suffix == ".npy"
         ]
 
         out = mdf.extract_can_logging([dbc])
@@ -69,14 +69,14 @@ class TestCANBusLogging(unittest.TestCase):
             self.assertTrue(np.array_equal(values, target))
 
     def test_j1939_extract(self):
-        print('J1939 extract')
+        print("J1939 extract")
 
         temp_dir = Path(TestCANBusLogging.tempdir_j1939.name)
 
         mdf = [
             input_file
             for input_file in temp_dir.iterdir()
-            if input_file.suffix == '.mf4'
+            if input_file.suffix == ".mf4"
         ][0]
 
         mdf = MDF(mdf)
@@ -84,13 +84,13 @@ class TestCANBusLogging(unittest.TestCase):
         dbc = [
             input_file
             for input_file in temp_dir.iterdir()
-            if input_file.suffix == '.dbc'
+            if input_file.suffix == ".dbc"
         ][0]
 
         signals = [
             input_file
             for input_file in temp_dir.iterdir()
-            if input_file.suffix == '.npy'
+            if input_file.suffix == ".npy"
         ]
 
         out = mdf.extract_can_logging([dbc])
@@ -104,14 +104,14 @@ class TestCANBusLogging(unittest.TestCase):
             self.assertTrue(np.array_equal(values, target))
 
     def test_j1939_get_can_signal(self):
-        print('J1939 get CAN signal')
+        print("J1939 get CAN signal")
 
         temp_dir = Path(TestCANBusLogging.tempdir_j1939.name)
 
         mdf = [
             input_file
             for input_file in temp_dir.iterdir()
-            if input_file.suffix == '.mf4'
+            if input_file.suffix == ".mf4"
         ][0]
 
         mdf = MDF(mdf)
@@ -119,13 +119,13 @@ class TestCANBusLogging(unittest.TestCase):
         dbc = [
             input_file
             for input_file in temp_dir.iterdir()
-            if input_file.suffix == '.dbc'
+            if input_file.suffix == ".dbc"
         ][0]
 
         signals = [
             input_file
             for input_file in temp_dir.iterdir()
-            if input_file.suffix == '.npy'
+            if input_file.suffix == ".npy"
         ]
 
         for signal in signals:

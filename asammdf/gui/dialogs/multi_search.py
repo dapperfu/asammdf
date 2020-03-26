@@ -54,7 +54,9 @@ class MultiSearch(Ui_MultiSearchDialog, QtWidgets.QDialog):
                 pattern = re.compile(f"(?i){pattern}")
                 for i, channels_db in enumerate(self.channels_dbs, 1):
                     match_results = [
-                        f'{i:> 2}: {name}' for name in channels_db if pattern.match(name)
+                        f"{i:> 2}: {name}"
+                        for name in channels_db
+                        if pattern.match(name)
                     ]
                     results.extend(match_results)
 
@@ -103,10 +105,8 @@ class MultiSearch(Ui_MultiSearchDialog, QtWidgets.QDialog):
     def show_measurement_list(self, event):
         info = []
         for i, name in enumerate(self.measurements, 1):
-            info.extend(wrap(f'{i:> 2}: {name}', 120))
+            info.extend(wrap(f"{i:> 2}: {name}", 120))
 
         QtWidgets.QMessageBox.information(
-            self,
-            "Measurement files used for comparison",
-            '\n'.join(info),
+            self, "Measurement files used for comparison", "\n".join(info),
         )

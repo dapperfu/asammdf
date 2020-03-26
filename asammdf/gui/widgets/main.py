@@ -41,13 +41,15 @@ class MainWindow(Ui_PyMDFMainWindow, QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout()
         widget.setLayout(layout)
 
-        multi_search = QtWidgets.QPushButton('Search')
+        multi_search = QtWidgets.QPushButton("Search")
         icon = QtGui.QIcon()
-        icon.addPixmap(QtGui.QPixmap(":/search.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon.addPixmap(
+            QtGui.QPixmap(":/search.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off
+        )
         multi_search.setIcon(icon)
         multi_search.clicked.connect(self.comparison_search)
 
-        multi_info = QtWidgets.QPushButton('Measurements information')
+        multi_info = QtWidgets.QPushButton("Measurements information")
         icon = QtGui.QIcon()
         icon.addPixmap(QtGui.QPixmap(":/info.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
         multi_info.setIcon(icon)
@@ -309,9 +311,7 @@ class MainWindow(Ui_PyMDFMainWindow, QtWidgets.QMainWindow):
         action = QtWidgets.QAction("{: <20}\tAlt+R".format("Raw samples"), menu)
         action.triggered.connect(
             partial(
-                self.plot_action,
-                key=QtCore.Qt.Key_R,
-                modifier=QtCore.Qt.AltModifier,
+                self.plot_action, key=QtCore.Qt.Key_R, modifier=QtCore.Qt.AltModifier,
             )
         )
         action.setShortcut(QtGui.QKeySequence("Alt+R"))
@@ -320,9 +320,7 @@ class MainWindow(Ui_PyMDFMainWindow, QtWidgets.QMainWindow):
         action = QtWidgets.QAction("{: <20}\tAlt+S".format("Scaled samples"), menu)
         action.triggered.connect(
             partial(
-                self.plot_action,
-                key=QtCore.Qt.Key_S,
-                modifier=QtCore.Qt.AltModifier,
+                self.plot_action, key=QtCore.Qt.Key_S, modifier=QtCore.Qt.AltModifier,
             )
         )
         action.setShortcut(QtGui.QKeySequence("Alt+S"))
@@ -859,8 +857,7 @@ class MainWindow(Ui_PyMDFMainWindow, QtWidgets.QMainWindow):
                     self.files.widget(i).mdf.channels_db for i in range(count)
                 ]
                 measurements = [
-                    str(self.files.widget(i).mdf.name)
-                    for i in range(count)
+                    str(self.files.widget(i).mdf.name) for i in range(count)
                 ]
 
                 dlg = MultiSearch(channels_dbs, measurements, parent=self,)
@@ -903,19 +900,12 @@ class MainWindow(Ui_PyMDFMainWindow, QtWidgets.QMainWindow):
 
     def comparison_info(self, event):
         count = self.files.count()
-        measurements = [
-            str(self.files.widget(i).mdf.name)
-            for i in range(count)
-        ]
+        measurements = [str(self.files.widget(i).mdf.name) for i in range(count)]
 
         info = []
         for i, name in enumerate(measurements, 1):
-            info.extend(wrap(f'{i:> 2}: {name}', 120))
+            info.extend(wrap(f"{i:> 2}: {name}", 120))
 
         QtWidgets.QMessageBox.information(
-            self,
-            "Measurement files used for comparison",
-            '\n'.join(info),
+            self, "Measurement files used for comparison", "\n".join(info),
         )
-
-
